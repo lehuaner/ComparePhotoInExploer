@@ -259,35 +259,34 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 从屏幕坐标反算指针指向图片的像素坐标
+    /// 从屏幕坐标反算指针指向图片的归一化坐标（0~1 比例位置）
     /// </summary>
-    private PointF ScreenToImagePixel(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    private PointF ScreenToNormalized(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
     {
         float scaledWidth = imageSize.Width * zoom;
         float scaledHeight = imageSize.Height * zoom;
         float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
         float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
 
-        float pxX = (screenPos.X - imgX) / zoom;
-        float pxY = (screenPos.Y - imgY) / zoom;
-        return new PointF(pxX, pxY);
+        float normX = (screenPos.X - imgX) / scaledWidth;
+        float normY = (screenPos.Y - imgY) / scaledHeight;
+        return new PointF(normX, normY);
     }
 
     /// <summary>
-    /// 以图片像素坐标为缩放中心，缩放后该像素的屏幕位置严格不变
+    /// 以归一化坐标（0~1 比例位置）为缩放中心，缩放后该比例位置的屏幕位置严格不变
     /// </summary>
-    private PointF ZoomAtPixel(PointF pixel, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
+    private PointF ZoomAtNormalized(PointF norm, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
     {
-        float newScaledWidth = imageSize.Width * newZoom;
-        float newScaledHeight = imageSize.Height * newZoom;
-
         float oldScaledWidth = imageSize.Width * oldZoom;
         float oldScaledHeight = imageSize.Height * oldZoom;
-        float oldScreenX = drawArea.Left + (drawArea.Width - oldScaledWidth) / 2f + oldOffset.X + pixel.X * oldZoom;
-        float oldScreenY = drawArea.Top + (drawArea.Height - oldScaledHeight) / 2f + oldOffset.Y + pixel.Y * oldZoom;
+        float oldScreenX = drawArea.Left + (drawArea.Width - oldScaledWidth) / 2f + oldOffset.X + norm.X * oldScaledWidth;
+        float oldScreenY = drawArea.Top + (drawArea.Height - oldScaledHeight) / 2f + oldOffset.Y + norm.Y * oldScaledHeight;
 
-        float newOffsetX = oldScreenX - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - pixel.X * newZoom;
-        float newOffsetY = oldScreenY - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - pixel.Y * newZoom;
+        float newScaledWidth = imageSize.Width * newZoom;
+        float newScaledHeight = imageSize.Height * newZoom;
+        float newOffsetX = oldScreenX - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - norm.X * newScaledWidth;
+        float newOffsetY = oldScreenY - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - norm.Y * newScaledHeight;
 
         return new PointF(newOffsetX, newOffsetY);
     }
@@ -327,7 +326,7 @@ public partial class Form1 : Form
         }
         else if (IsAltPressed())
         {
-            // Alt+滚轮：以鼠标指针为中心缩放
+            // Alt+滚轮：以鼠标指针为中心缩放（使用归一化坐标同步，确保同比例图片缩放一致）
             float zoomFactor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
             float oldZoomLevel = _zoomLevel;
             float newZoomLevel = _zoomLevel * zoomFactor;
@@ -345,21 +344,22 @@ public partial class Form1 : Form
             Size imgSize1 = _image1?.Size ?? Size.Empty;
             Size imgSize2 = _image2?.Size ?? Size.Empty;
 
-            // 缩放前后的实际缩放
             float oldEff1 = _baseZoom1 * oldZoomLevel, newEff1 = _baseZoom1 * newZoomLevel;
             float oldEff2 = _baseZoom2 * oldZoomLevel, newEff2 = _baseZoom2 * newZoomLevel;
 
             if (mousePos.X < halfWidth)
             {
-                PointF pixel = ScreenToImagePixel(mousePos, rect1, oldEff1, _offset1, imgSize1);
-                _offset1 = ZoomAtPixel(pixel, rect1, oldEff1, newEff1, _offset1, imgSize1);
-                _offset2 = ZoomAtPixel(pixel, rect2, oldEff2, newEff2, _offset2, imgSize2);
+                // 鼠标在左侧：从左侧图算出归一化坐标，两张图用同一归一化坐标缩放
+                PointF norm = ScreenToNormalized(mousePos, rect1, oldEff1, _offset1, imgSize1);
+                _offset1 = ZoomAtNormalized(norm, rect1, oldEff1, newEff1, _offset1, imgSize1);
+                _offset2 = ZoomAtNormalized(norm, rect2, oldEff2, newEff2, _offset2, imgSize2);
             }
             else
             {
-                PointF pixel = ScreenToImagePixel(mousePos, rect2, oldEff2, _offset2, imgSize2);
-                _offset2 = ZoomAtPixel(pixel, rect2, oldEff2, newEff2, _offset2, imgSize2);
-                _offset1 = ZoomAtPixel(pixel, rect1, oldEff1, newEff1, _offset1, imgSize1);
+                // 鼠标在右侧：从右侧图算出归一化坐标，两张图用同一归一化坐标缩放
+                PointF norm = ScreenToNormalized(mousePos, rect2, oldEff2, _offset2, imgSize2);
+                _offset2 = ZoomAtNormalized(norm, rect2, oldEff2, newEff2, _offset2, imgSize2);
+                _offset1 = ZoomAtNormalized(norm, rect1, oldEff1, newEff1, _offset1, imgSize1);
             }
 
             _zoomLevel = newZoomLevel;
