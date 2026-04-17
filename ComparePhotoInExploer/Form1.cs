@@ -325,6 +325,18 @@ public partial class Form1 : Form
         return new PointF(newOffsetX, newOffsetY);
     }
 
+    /// <summary>
+    /// 以归一化坐标为缩放中心缩放，并将该点移动到目标屏幕位置（用于被动图同步缩放中心位置）
+    /// </summary>
+    private PointF ZoomAndMoveToTarget(PointF norm, Rectangle drawArea, float newZoom, Size imageSize, PointF targetScreenPos)
+    {
+        float newScaledWidth = imageSize.Width * newZoom;
+        float newScaledHeight = imageSize.Height * newZoom;
+        float offsetX = targetScreenPos.X - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - norm.X * newScaledWidth;
+        float offsetY = targetScreenPos.Y - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - norm.Y * newScaledHeight;
+        return new PointF(offsetX, offsetY);
+    }
+
     private bool IsAltPressed()
     {
         return (ModifierKeys & Keys.Alt) == Keys.Alt;
@@ -383,17 +395,27 @@ public partial class Form1 : Form
 
             if (mousePos.X < halfWidth)
             {
-                // 鼠标在左侧：从左侧图算出归一化坐标，两张图用同一归一化坐标缩放
+                // 鼠标在左侧：左侧为主动图，右侧为被动图
                 PointF norm = ScreenToNormalized(mousePos, rect1, oldEff1, _offset1, imgSize1);
+                // 主动图：以鼠标位置为中心缩放，不移动
                 _offset1 = ZoomAtNormalized(norm, rect1, oldEff1, newEff1, _offset1, imgSize1);
-                _offset2 = ZoomAtNormalized(norm, rect2, oldEff2, newEff2, _offset2, imgSize2);
+                // 被动图：以相同归一化坐标缩放，并将缩放中心移到与主动图对应的位置
+                float activeLocalX = mousePos.X - rect1.Left;
+                float activeLocalY = mousePos.Y - rect1.Top;
+                PointF targetPos = new PointF(rect2.Left + activeLocalX, rect2.Top + activeLocalY);
+                _offset2 = ZoomAndMoveToTarget(norm, rect2, newEff2, imgSize2, targetPos);
             }
             else
             {
-                // 鼠标在右侧：从右侧图算出归一化坐标，两张图用同一归一化坐标缩放
+                // 鼠标在右侧：右侧为主动图，左侧为被动图
                 PointF norm = ScreenToNormalized(mousePos, rect2, oldEff2, _offset2, imgSize2);
+                // 主动图：以鼠标位置为中心缩放，不移动
                 _offset2 = ZoomAtNormalized(norm, rect2, oldEff2, newEff2, _offset2, imgSize2);
-                _offset1 = ZoomAtNormalized(norm, rect1, oldEff1, newEff1, _offset1, imgSize1);
+                // 被动图：以相同归一化坐标缩放，并将缩放中心移到与主动图对应的位置
+                float activeLocalX = mousePos.X - rect2.Left;
+                float activeLocalY = mousePos.Y - rect2.Top;
+                PointF targetPos = new PointF(rect1.Left + activeLocalX, rect1.Top + activeLocalY);
+                _offset1 = ZoomAndMoveToTarget(norm, rect1, newEff1, imgSize1, targetPos);
             }
 
             _zoomLevel = newZoomLevel;
