@@ -12,7 +12,6 @@ public partial class Form1 : Form
     private bool _isDragging = false;
     private Point _lastMousePos;
     private float _zoomLevel = 1.0f;
-    private bool _showInstructions = false;
 
     // 每张图独立的数据
     private Image?[] _images;
@@ -25,9 +24,10 @@ public partial class Form1 : Form
 
     // 自绘标题栏
     private const int TitleBarH = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose;
-    private bool _hoverMin, _hoverMax, _hoverClose;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory;
     private bool _isWindowMaximized = false;
+    private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
 
     // Win32 拖拽移动
     [DllImport("user32.dll")]
@@ -77,9 +77,11 @@ public partial class Form1 : Form
         // 先加载图片到内存缓存（在添加控件前）
         LoadImages();
 
-        // 添加历史记录条到控件（后添加避免布局问题）
-        _historyBar.Dock = DockStyle.Top;
+        // 添加历史记录条（手动定位在标题栏下方，避免遮挡标题栏）
+        _historyBar.Location = new Point(0, TitleBarH);
+        _historyBar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         this.Controls.Add(_historyBar);
+        UpdateHistoryBarSize();
 
         // 加载历史记录
         _historyGroups = HistoryData.Load();
@@ -184,10 +186,42 @@ public partial class Form1 : Form
         if (groupIndex < 0 || groupIndex >= _historyGroups.Count) return;
 
         var removed = _historyGroups[groupIndex];
+        
+        // 检查是否正在显示该组
+        bool isCurrentGroup = _imagePaths != null && 
+            _imagePaths.Length == removed.ImagePaths.Count &&
+            _imagePaths.SequenceEqual(removed.ImagePaths);
+        
         HistoryData.DeleteGroupThumbnails(_historyGroups, removed.Id);
         _historyGroups.RemoveAt(groupIndex);
         HistoryData.Save(_historyGroups);
         _historyBar.LoadGroups(_historyGroups);
+        
+        // 如果删除的是当前对比组，清空显示
+        if (isCurrentGroup)
+        {
+            ClearCurrentImages();
+        }
+    }
+
+    /// <summary>
+    /// 清空当前显示的图片
+    /// </summary>
+    private void ClearCurrentImages()
+    {
+        for (int i = 0; i < _images.Length; i++)
+        {
+            _images[i]?.Dispose();
+            _images[i] = null;
+        }
+        _imagePaths = Array.Empty<string>();
+        _imageCount = 0;
+        _zoomLevel = 1.0f;
+        for (int i = 0; i < _offsets.Length; i++)
+            _offsets[i] = new PointF(0, 0);
+        
+        this.Text = "图片对比 (无图片)";
+        this.Invalidate();
     }
 
     /// <summary>
@@ -209,7 +243,7 @@ public partial class Form1 : Form
             _offsets[i] = new PointF(0, 0);
 
         _zoomLevel = 1.0f;
-        _showInstructions = false;
+        _showHelp = false;
 
         this.Text = $"图片对比 ({_imageCount}张)";
 
@@ -310,7 +344,9 @@ public partial class Form1 : Form
     {
         if (e.KeyCode == Keys.H)
         {
-            _showInstructions = !_showInstructions;
+            _showHelp = !_showHelp;
+            if (_showHelp)
+                _historyBar.Collapse();
             this.Invalidate();
         }
     }
@@ -322,6 +358,10 @@ public partial class Form1 : Form
 
         try
         {
+            // 历史记录和按键说明互斥
+            if (!_historyBar.IsCollapsed)
+                _showHelp = false;
+
             EnsureCheckerBrush();
 
             // 绘制自绘标题栏
@@ -352,10 +392,10 @@ public partial class Form1 : Form
             for (int r = 1; r < _rows; r++)
                 e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
 
-            // 按键提示
-            if (_showInstructions)
+            // 按键说明（由标题栏按钮触发，与历史记录互斥）
+            if (_showHelp)
             {
-                DrawKeyInstructions(e.Graphics);
+                DrawHelpPanel(e.Graphics);
             }
         }
         catch (Exception ex)
@@ -365,7 +405,7 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 自绘标题栏 — 左侧显示"历史记录"按钮，右侧显示最小化/最大化/关闭
+    /// 自绘标题栏 — 左侧"历史记录"按钮，中间"按键说明"按钮，右侧最小化/最大化/关闭
     /// </summary>
     private void DrawTitleBar(Graphics g)
     {
@@ -380,6 +420,27 @@ public partial class Form1 : Form
         using var titleTextBrush = new SolidBrush(Color.FromArgb(220, 220, 220));
         string titleText = this.Text;
         g.DrawString(titleText, titleFont, titleTextBrush, 12, 8);
+
+        // 历史记录按钮
+        _btnHistory = new Rectangle(120, 0, 70, TitleBarH);
+        bool historyActive = !_historyBar.IsCollapsed;
+        Color historyBg = historyActive ? Color.FromArgb(62, 62, 62) :
+                          _hoverHistory ? Color.FromArgb(50, 50, 50) : Color.Transparent;
+        using (var historyBgBrush = new SolidBrush(historyBg))
+            g.FillRectangle(historyBgBrush, _btnHistory);
+        using var historyFont = new Font("Segoe UI", 9F);
+        using var historyFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
+        g.DrawString("历史记录", historyFont, historyFgBrush, 125, 8);
+
+        // 按键说明按钮
+        _btnHelp = new Rectangle(195, 0, 70, TitleBarH);
+        Color helpBg = _showHelp ? Color.FromArgb(62, 62, 62) :
+                       _hoverHelp ? Color.FromArgb(50, 50, 50) : Color.Transparent;
+        using (var helpBgBrush = new SolidBrush(helpBg))
+            g.FillRectangle(helpBgBrush, _btnHelp);
+        using var helpFont = new Font("Segoe UI", 9F);
+        using var helpFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
+        g.DrawString("按键说明", helpFont, helpFgBrush, 200, 8);
 
         // 窗口控制按钮区域
         int btnW = 46;
@@ -428,28 +489,35 @@ public partial class Form1 : Form
             rect.Top + (rect.Height - size.Height) / 2);
     }
 
-    private void DrawKeyInstructions(Graphics g)
+    private void DrawHelpPanel(Graphics g)
     {
         string[] instructions = {
-            "按键说明:",
+            "操作说明:",
             "- 鼠标左键拖动: 同步移动所有图片",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片",
-            "- H键: 显示/隐藏按键提示"
+            "- 标题栏'历史记录': 点击展开/收起历史对比记录",
+            "- 标题栏'按键说明': 点击查看操作说明"
         };
 
-        float boxWidth = 340f;
-        float boxHeight = instructions.Length * 20 + 10;
+        float boxWidth = 380f;
+        float boxHeight = instructions.Length * 22 + 20;
         int topOffset = TitleBarH + _historyBar.Height;
-        using (var bgBrush = new SolidBrush(Color.FromArgb(200, 255, 255, 255)))
+        using (var bgBrush = new SolidBrush(Color.FromArgb(230, 32, 32, 32)))
         {
             g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
         }
 
+        using var borderPen = new Pen(Color.FromArgb(80, 80, 80), 1);
+        g.DrawRectangle(borderPen, 5, topOffset + 5, boxWidth, boxHeight);
+
         for (int i = 0; i < instructions.Length; i++)
         {
-            g.DrawString(instructions[i], this.Font, Brushes.Black, 10, topOffset + 10 + i * 20);
+            using var brush = i == 0 
+                ? new SolidBrush(Color.FromArgb(255, 220, 220, 220))
+                : new SolidBrush(Color.FromArgb(200, 200, 200));
+            g.DrawString(instructions[i], i == 0 ? new Font(this.Font, FontStyle.Bold) : this.Font, brush, 12, topOffset + 10 + i * 22);
         }
     }
 
@@ -529,10 +597,21 @@ public partial class Form1 : Form
                 this.WindowState = FormWindowState.Minimized;
                 return;
             }
-            // 历史记录折叠按钮区域 — 点击标题栏左侧
-            if (e.Location.X < 100)
+            // 按键说明按钮
+            if (_btnHelp.Contains(e.Location))
             {
+                _showHelp = !_showHelp;
+                if (_showHelp)
+                    _historyBar.Collapse(); // 关闭历史记录
+                this.Invalidate();
+                return;
+            }
+            // 历史记录按钮
+            if (_btnHistory.Contains(e.Location))
+            {
+                _showHelp = false; // 关闭按键说明
                 _historyBar.ToggleCollapse();
+                this.Invalidate();
                 return;
             }
             // 拖动窗口
@@ -564,12 +643,16 @@ public partial class Form1 : Form
             bool newHoverMin = _btnMin.Contains(e.Location);
             bool newHoverMax = _btnMax.Contains(e.Location);
             bool newHoverClose = _btnClose.Contains(e.Location);
+            bool newHoverHelp = _btnHelp.Contains(e.Location);
+            bool newHoverHistory = _btnHistory.Contains(e.Location);
 
-            if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose)
+            if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
                 _hoverClose = newHoverClose;
+                _hoverHelp = newHoverHelp;
+                _hoverHistory = newHoverHistory;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
             }
             return;
@@ -661,8 +744,19 @@ public partial class Form1 : Form
     {
         base.OnResize(e);
         _isWindowMaximized = this.WindowState == FormWindowState.Maximized;
+        UpdateHistoryBarSize();
         UpdateBaseZoom();
         this.Invalidate();
+    }
+
+    /// <summary>
+    /// 更新历史记录条的位置和宽度
+    /// </summary>
+    private void UpdateHistoryBarSize()
+    {
+        if (_historyBar == null) return;
+        _historyBar.Location = new Point(0, TitleBarH);
+        _historyBar.Width = this.ClientSize.Width;
     }
 
     protected override void OnShown(EventArgs e)

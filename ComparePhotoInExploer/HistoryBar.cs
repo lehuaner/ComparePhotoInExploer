@@ -13,7 +13,6 @@ public class HistoryBar : Panel
     private const int ThumbnailSize = 24;
     private const int PaddingSize = 2;
     private const int SeparatorWidth = 8;
-    private const int TitleBarHeight = 28;
     private const int RowHeight = ThumbnailSize + PaddingSize * 2;
 
     /// <summary>
@@ -31,7 +30,8 @@ public class HistoryBar : Panel
 
     public HistoryBar()
     {
-        this.BackColor = Color.FromArgb(240, 240, 240);
+        this.SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+        this.BackColor = Color.Transparent;
         this.DoubleBuffered = true;
         this.Padding = new Padding(0);
         this.Margin = new Padding(0);
@@ -98,12 +98,12 @@ public class HistoryBar : Panel
             int newH;
             if (_collapsed || _groups.Count == 0)
             {
-                newH = TitleBarHeight;
+                newH = 0; // 折叠时不占空间
             }
             else
             {
                 int rows = CalcRowCount();
-                newH = TitleBarHeight + rows * RowHeight + PaddingSize;
+                newH = rows * RowHeight + PaddingSize * 2;
             }
             if (this.Height != newH)
                 this.Height = newH;
@@ -148,26 +148,9 @@ public class HistoryBar : Panel
     {
         base.OnPaint(e);
 
-        // 标题栏背景
-        using var titleBg = new SolidBrush(Color.FromArgb(245, 245, 245));
-        e.Graphics.FillRectangle(titleBg, 0, 0, this.Width, TitleBarHeight);
+        // 不绘制任何背景，保持透明
 
-        // 绘制折叠按钮
-        string btnText = _collapsed ? "▶" : "▼";
-        using var btnFont = new Font("Segoe UI", 9F, FontStyle.Bold);
-        using var btnBrush = new SolidBrush(Color.FromArgb(80, 80, 80));
-        var btnRect = new Rectangle(6, 4, 24, 20);
-        e.Graphics.DrawString(btnText, btnFont, btnBrush, btnRect.Left + 4, btnRect.Top + 1);
-
-        // 绘制"历史记录"文字
-        using var titleFont = new Font("Segoe UI", 9F);
-        using var titleBrush = new SolidBrush(Color.FromArgb(80, 80, 80));
-        e.Graphics.DrawString("历史记录", titleFont, titleBrush, 34, 6);
-
-        // 底部分割线
-        using var bottomPen = new Pen(Color.FromArgb(200, 200, 200), 1);
-        e.Graphics.DrawLine(bottomPen, 0, this.Height - 1, this.Width, this.Height - 1);
-
+        // 折叠状态或无历史记录时直接返回
         if (_collapsed || _groups.Count == 0)
             return;
 
@@ -175,7 +158,7 @@ public class HistoryBar : Panel
 
         int availWidth = this.ClientSize.Width - PaddingSize * 2;
         int startX = PaddingSize;
-        int startY = TitleBarHeight + PaddingSize;
+        int startY = PaddingSize; // 不再有内部标题行，从顶部开始
         int x = startX;
         int y = startY;
 
@@ -197,7 +180,7 @@ public class HistoryBar : Panel
             if (gi == _hoverGroupIndex)
             {
                 var highlightRect = new Rectangle(groupStartX - 1, y + 1, imgCount * (ThumbnailSize + PaddingSize) + 2, RowHeight - 2);
-                using var hlBrush = new SolidBrush(Color.FromArgb(40, 100, 149, 237));
+                using var hlBrush = new SolidBrush(Color.FromArgb(60, 100, 149, 237));
                 e.Graphics.FillRectangle(hlBrush, highlightRect);
             }
 
@@ -208,7 +191,7 @@ public class HistoryBar : Panel
                 {
                     var rect = new Rectangle(x, y + PaddingSize, ThumbnailSize, ThumbnailSize);
 
-                    using var borderPen = new Pen(Color.FromArgb(160, 160, 160), 1);
+                    using var borderPen = new Pen(Color.FromArgb(200, 255, 255, 255), 1);
                     e.Graphics.DrawRectangle(borderPen, rect);
 
                     if (thumbs[ii] != null)
@@ -221,7 +204,7 @@ public class HistoryBar : Panel
             }
 
             // 组分隔符
-            using var sepPen = new Pen(Color.FromArgb(160, 160, 160), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+            using var sepPen = new Pen(Color.FromArgb(120, 255, 255, 255), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
             e.Graphics.DrawLine(sepPen, x + SeparatorWidth / 2, y + 4, x + SeparatorWidth / 2, y + RowHeight - 4);
 
             var hitRect = new Rectangle(groupStartX, y, x - groupStartX + SeparatorWidth, RowHeight);
@@ -231,35 +214,9 @@ public class HistoryBar : Panel
         }
     }
 
-    /// <summary>
-    /// 获取标题栏上折叠按钮的区域（供外部点击检测）
-    /// </summary>
-    public Rectangle GetToggleButtonRect()
-    {
-        return new Rectangle(6, 4, 24, 20);
-    }
-
-    /// <summary>
-    /// 检查标题栏按钮是否被点击
-    /// </summary>
-    public bool IsToggleButtonHit(Point location)
-    {
-        return GetToggleButtonRect().Contains(location);
-    }
-
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
-
-        // 标题栏区域 - 检查折叠按钮
-        if (e.Location.Y < TitleBarHeight)
-        {
-            if (IsToggleButtonHit(e.Location))
-            {
-                ToggleCollapse();
-            }
-            return;
-        }
 
         if (_collapsed) return;
 
@@ -347,6 +304,19 @@ public class HistoryBar : Panel
         if (_collapsed)
         {
             _collapsed = false;
+            UpdateHeight();
+            this.Invalidate();
+        }
+    }
+
+    /// <summary>
+    /// 折叠历史记录（供外部调用）
+    /// </summary>
+    public void Collapse()
+    {
+        if (!_collapsed)
+        {
+            _collapsed = true;
             UpdateHeight();
             this.Invalidate();
         }
