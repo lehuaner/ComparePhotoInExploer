@@ -21,7 +21,8 @@ New-Item -Path "$regPath\command" -Force | Out-Null
 Set-ItemProperty -Path $regPath -Name "MUIVerb" -Value "对比图片" -Force
 Set-ItemProperty -Path $regPath -Name "Icon" -Value "$exePath" -Force
 Set-ItemProperty -Path $regPath -Name "MultiSelectModel" -Value "Player" -Force
-Set-ItemProperty -Path "$regPath\command" -Name "" -Value "\"$exePath\" \"%1\" \"%2\"" -Force
+# Windows 资源管理器多选时用 %1~%9 传递选中文件（最多9个）
+Set-ItemProperty -Path "$regPath\command" -Name "" -Value "\"$exePath\" \"%1\" \"%2\" \"%3\" \"%4\" \"%5\" \"%6\" \"%7\" \"%8\" \"%9\"" -Force
 
 Write-Host "注册表安装成功！" -ForegroundColor Green
-Write-Host "现在可以在资源管理器中选择两个图片文件，右键点击选择'对比图片'进行比较。" -ForegroundColor Yellow
+Write-Host "现在可以在资源管理器中选择多个图片文件(最多9个)，右键点击选择'对比图片'进行比较。" -ForegroundColor Yellow

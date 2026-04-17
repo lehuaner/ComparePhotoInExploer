@@ -2,30 +2,40 @@ namespace ComparePhotoInExploer;
 
 public partial class Form1 : Form
 {
-    private string[] _imagePaths;
+    private readonly string[] _imagePaths;
+    private readonly int _imageCount;
+    private readonly int _cols;
+    private readonly int _rows;
+
     private bool _isDragging = false;
     private Point _lastMousePos;
     private float _zoomLevel = 1.0f;
-    private PointF _offset1 = new PointF(0, 0);
-    private PointF _offset2 = new PointF(0, 0);
     private bool _showInstructions = false;
     private Button _toggleButton;
 
-    // 缓存图片，避免每次 Paint 从磁盘重新加载
-    private Image? _image1;
-    private Image? _image2;
-
-    // 每张图独立的基础缩放比例（fit-to-window），_zoomLevel 作为公共相对倍率
-    private float _baseZoom1 = 1.0f;
-    private float _baseZoom2 = 1.0f;
+    // 每张图独立的数据
+    private readonly Image?[] _images;
+    private readonly float[] _baseZooms;
+    private readonly PointF[] _offsets;
 
     public Form1(string[] imagePaths)
     {
         InitializeComponent();
-        _imagePaths = imagePaths;
-        this.Text = "图片对比";
-        this.Size = new Size(1000, 600);
+        _imagePaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+        _imageCount = Math.Clamp(_imagePaths.Length, 1, 9);
+        this.Text = $"图片对比 ({_imageCount}张)";
+        this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
         this.DoubleBuffered = true;
+
+        // 计算网格尺寸
+        (_cols, _rows) = GetGridLayout(_imageCount);
+
+        // 初始化每张图的数据
+        _images = new Image?[_imageCount];
+        _baseZooms = new float[_imageCount];
+        _offsets = new PointF[_imageCount];
+        for (int i = 0; i < _imageCount; i++)
+            _offsets[i] = new PointF(0, 0);
 
         // 创建切换按钮
         _toggleButton = new Button();
@@ -52,21 +62,42 @@ public partial class Form1 : Form
         LoadImages();
     }
 
+    /// <summary>
+    /// 根据图片数量计算网格布局 (cols, rows)
+    /// 2→1×2, 3→2×2, 4→2×2, 5→2×3, 6→2×3, 7→3×3, 8→3×3, 9→3×3
+    /// </summary>
+    private static (int cols, int rows) GetGridLayout(int count)
+    {
+        return count switch
+        {
+            1 => (1, 1),
+            2 => (2, 1),
+            3 => (2, 2),
+            4 => (2, 2),
+            5 => (2, 3),
+            6 => (2, 3),
+            _ => (3, 3) // 7, 8, 9
+        };
+    }
+
     private void LoadImages()
     {
-        if (_imagePaths == null || _imagePaths.Length < 2)
+        if (_imagePaths == null || _imagePaths.Length == 0)
             return;
 
         try
         {
-            _image1?.Dispose();
-            _image2?.Dispose();
+            for (int i = 0; i < _imageCount; i++)
+            {
+                _images[i]?.Dispose();
+                _images[i] = null;
 
-            using var fs1 = new FileStream(_imagePaths[0], FileMode.Open, FileAccess.Read);
-            _image1 = Image.FromStream(fs1);
-
-            using var fs2 = new FileStream(_imagePaths[1], FileMode.Open, FileAccess.Read);
-            _image2 = Image.FromStream(fs2);
+                if (i < _imagePaths.Length)
+                {
+                    using var fs = new FileStream(_imagePaths[i], FileMode.Open, FileAccess.Read);
+                    _images[i] = Image.FromStream(fs);
+                }
+            }
         }
         catch
         {
@@ -77,7 +108,7 @@ public partial class Form1 : Form
     /// <summary>
     /// 计算使图片适配绘制区域（保持宽高比）的缩放比例
     /// </summary>
-    private float CalculateFitZoom(Image image, Rectangle drawArea)
+    private static float CalculateFitZoom(Image image, Rectangle drawArea)
     {
         if (image == null) return 1.0f;
         float scaleX = (float)drawArea.Width / image.Width;
@@ -86,27 +117,48 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 更新两张图的基础缩放比例，使其各自 fit-to-window，同比例图片显示相同大小
+    /// 获取第 i 张图的绘制区域
+    /// </summary>
+    private Rectangle GetCellRect(int index)
+    {
+        int cellW = this.ClientSize.Width / _cols;
+        int cellH = this.ClientSize.Height / _rows;
+        int col = index % _cols;
+        int row = index / _cols;
+        return new Rectangle(col * cellW, row * cellH, cellW, cellH);
+    }
+
+    /// <summary>
+    /// 根据屏幕坐标确定鼠标所在的图片索引，-1 表示不在任何图片上
+    /// </summary>
+    private int HitTest(PointF screenPos)
+    {
+        for (int i = 0; i < _imageCount; i++)
+        {
+            var rect = GetCellRect(i);
+            if (rect.Contains((int)screenPos.X, (int)screenPos.Y))
+                return i;
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// 更新每张图的基础缩放比例，使其各自 fit-to-window
     /// </summary>
     private void UpdateBaseZoom()
     {
-        if (_image1 == null || _image2 == null)
-            return;
-
-        int halfWidth = this.ClientSize.Width / 2;
-        int height = this.ClientSize.Height;
-
-        var rect1 = new Rectangle(0, 0, halfWidth, height);
-        var rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
-
-        _baseZoom1 = CalculateFitZoom(_image1, rect1);
-        _baseZoom2 = CalculateFitZoom(_image2, rect2);
+        for (int i = 0; i < _imageCount; i++)
+        {
+            if (_images[i] == null) continue;
+            var rect = GetCellRect(i);
+            _baseZooms[i] = CalculateFitZoom(_images[i]!, rect);
+        }
     }
 
     /// <summary>
     /// 获取图片的实际缩放 = 基础缩放 × 公共倍率
     /// </summary>
-    private float GetEffectiveZoom(bool isLeftImage) => isLeftImage ? _baseZoom1 * _zoomLevel : _baseZoom2 * _zoomLevel;
+    private float GetEffectiveZoom(int index) => _baseZooms[index] * _zoomLevel;
 
     private void Form1_Resize(object? sender, EventArgs e)
     {
@@ -123,34 +175,35 @@ public partial class Form1 : Form
 
     private void Form1_Paint(object sender, PaintEventArgs e)
     {
-        if (_imagePaths == null || _imagePaths.Length < 2)
+        if (_imagePaths == null || _imagePaths.Length == 0)
             return;
 
         try
         {
-            if (_image1 == null || _image2 == null)
+            EnsureCheckerBrush();
+
+            for (int i = 0; i < _imageCount; i++)
             {
-                e.Graphics.DrawString("图片加载失败", this.Font, Brushes.Red, 10, 10);
-                return;
+                var rect = GetCellRect(i);
+
+                // 棋盘格背景
+                e.Graphics.FillRectangle(_checkerBrush!, rect);
+
+                // 绘制图片
+                if (_images[i] != null)
+                {
+                    DrawImage(e.Graphics, _images[i]!, rect, _offsets[i], GetEffectiveZoom(i));
+                }
             }
 
-            int halfWidth = this.ClientSize.Width / 2;
-            int height = this.ClientSize.Height;
-
-            // 全局绘制棋盘格背景
-            EnsureCheckerBrush();
-            e.Graphics.FillRectangle(_checkerBrush!, 0, 0, halfWidth, height);
-            e.Graphics.FillRectangle(_checkerBrush!, halfWidth, 0, halfWidth, height);
-
-            // 每张图使用独立的实际缩放
-            Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
-            DrawImage(e.Graphics, _image1, rect1, _offset1, GetEffectiveZoom(true), true);
-
-            Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
-            DrawImage(e.Graphics, _image2, rect2, _offset2, GetEffectiveZoom(false), false);
-
+            // 绘制网格分割线
             using var pen = new Pen(Color.Black, 2);
-            e.Graphics.DrawLine(pen, halfWidth, 0, halfWidth, height);
+            int cellW = this.ClientSize.Width / _cols;
+            int cellH = this.ClientSize.Height / _rows;
+            for (int c = 1; c < _cols; c++)
+                e.Graphics.DrawLine(pen, c * cellW, 0, c * cellW, this.ClientSize.Height);
+            for (int r = 1; r < _rows; r++)
+                e.Graphics.DrawLine(pen, 0, r * cellH, this.ClientSize.Width, r * cellH);
 
             // 按键提示在最上层绘制
             if (_showInstructions)
@@ -168,7 +221,7 @@ public partial class Form1 : Form
     {
         string[] instructions = {
             "按键说明:",
-            "- 鼠标左键拖动: 同步移动两张图片",
+            "- 鼠标左键拖动: 同步移动所有图片",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片"
@@ -205,7 +258,7 @@ public partial class Form1 : Form
         _checkerBrush = new TextureBrush(bmp);
     }
 
-    private void DrawImage(Graphics g, Image image, Rectangle drawArea, PointF offset, float zoom, bool isLeftImage)
+    private void DrawImage(Graphics g, Image image, Rectangle drawArea, PointF offset, float zoom)
     {
         float scaledWidth = image.Width * zoom;
         float scaledHeight = image.Height * zoom;
@@ -213,18 +266,10 @@ public partial class Form1 : Form
         float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
         float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
 
-        int halfWidth = this.ClientSize.Width / 2;
-        int height = this.ClientSize.Height;
-
         float visLeft = Math.Max(imgX, drawArea.Left);
         float visTop = Math.Max(imgY, drawArea.Top);
         float visRight = Math.Min(imgX + scaledWidth, drawArea.Right);
         float visBottom = Math.Min(imgY + scaledHeight, drawArea.Bottom);
-
-        if (isLeftImage && visRight > halfWidth)
-            visRight = halfWidth;
-        if (!isLeftImage && visLeft < halfWidth)
-            visLeft = halfWidth;
 
         float visWidth = visRight - visLeft;
         float visHeight = visBottom - visTop;
@@ -232,9 +277,7 @@ public partial class Form1 : Form
         if (visWidth <= 0 || visHeight <= 0)
             return;
 
-        g.SetClip(isLeftImage
-            ? new Rectangle(0, 0, halfWidth, height)
-            : new Rectangle(halfWidth, 0, halfWidth, height));
+        g.SetClip(drawArea);
 
         float srcX = (visLeft - imgX) / zoom;
         float srcY = (visTop - imgY) / zoom;
@@ -270,10 +313,10 @@ public partial class Form1 : Form
             int deltaX = e.X - _lastMousePos.X;
             int deltaY = e.Y - _lastMousePos.Y;
 
-            _offset1.X += deltaX;
-            _offset1.Y += deltaY;
-            _offset2.X += deltaX;
-            _offset2.Y += deltaY;
+            for (int i = 0; i < _imageCount; i++)
+            {
+                _offsets[i] = new PointF(_offsets[i].X + deltaX, _offsets[i].Y + deltaY);
+            }
 
             _lastMousePos = e.Location;
             this.Invalidate();
@@ -295,7 +338,7 @@ public partial class Form1 : Form
     /// <summary>
     /// 从屏幕坐标反算指针指向图片的归一化坐标（0~1 比例位置）
     /// </summary>
-    private PointF ScreenToNormalized(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    private static PointF ScreenToNormalized(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
     {
         float scaledWidth = imageSize.Width * zoom;
         float scaledHeight = imageSize.Height * zoom;
@@ -310,7 +353,7 @@ public partial class Form1 : Form
     /// <summary>
     /// 以归一化坐标（0~1 比例位置）为缩放中心，缩放后该比例位置的屏幕位置严格不变
     /// </summary>
-    private PointF ZoomAtNormalized(PointF norm, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
+    private static PointF ZoomAtNormalized(PointF norm, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
     {
         float oldScaledWidth = imageSize.Width * oldZoom;
         float oldScaledHeight = imageSize.Height * oldZoom;
@@ -328,7 +371,7 @@ public partial class Form1 : Form
     /// <summary>
     /// 以归一化坐标为缩放中心缩放，并将该点移动到目标屏幕位置（用于被动图同步缩放中心位置）
     /// </summary>
-    private PointF ZoomAndMoveToTarget(PointF norm, Rectangle drawArea, float newZoom, Size imageSize, PointF targetScreenPos)
+    private static PointF ZoomAndMoveToTarget(PointF norm, Rectangle drawArea, float newZoom, Size imageSize, PointF targetScreenPos)
     {
         float newScaledWidth = imageSize.Width * newZoom;
         float newScaledHeight = imageSize.Height * newZoom;
@@ -343,36 +386,33 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 首次显示时自动计算初始缩放，使两张图片都能完整显示
+    /// 首次显示时自动计算初始缩放，使图片都能完整显示
     /// </summary>
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
 
-        if (_image1 != null && _image2 != null)
-        {
-            UpdateBaseZoom();
-            _zoomLevel = 1.0f;
-            _offset1 = new PointF(0, 0);
-            _offset2 = new PointF(0, 0);
-            this.Invalidate();
-        }
+        UpdateBaseZoom();
+        _zoomLevel = 1.0f;
+        for (int i = 0; i < _imageCount; i++)
+            _offsets[i] = new PointF(0, 0);
+        this.Invalidate();
     }
 
     private void Form1_MouseWheel(object sender, MouseEventArgs e)
     {
         if (ModifierKeys == Keys.Control)
         {
-            // Ctrl+滚轮：左右移动，步长按当前显示大小的比例计算
-            float avgZoom = (_baseZoom1 + _baseZoom2) / 2f * _zoomLevel;
+            // Ctrl+滚轮：左右移动
+            float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Width * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
-            _offset1.X += delta;
-            _offset2.X += delta;
+            for (int i = 0; i < _imageCount; i++)
+                _offsets[i] = new PointF(_offsets[i].X + delta, _offsets[i].Y);
         }
         else if (IsAltPressed())
         {
-            // Alt+滚轮：以鼠标指针为中心缩放（使用归一化坐标同步，确保同比例图片缩放一致）
+            // Alt+滚轮：以鼠标指针为中心缩放
             float zoomFactor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
             float oldZoomLevel = _zoomLevel;
             float newZoomLevel = _zoomLevel * zoomFactor;
@@ -381,53 +421,50 @@ public partial class Form1 : Form
                 return;
 
             PointF mousePos = e.Location;
-            int halfWidth = this.ClientSize.Width / 2;
-            int height = this.ClientSize.Height;
-
-            Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
-            Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
-
-            Size imgSize1 = _image1?.Size ?? Size.Empty;
-            Size imgSize2 = _image2?.Size ?? Size.Empty;
-
-            float oldEff1 = _baseZoom1 * oldZoomLevel, newEff1 = _baseZoom1 * newZoomLevel;
-            float oldEff2 = _baseZoom2 * oldZoomLevel, newEff2 = _baseZoom2 * newZoomLevel;
-
-            if (mousePos.X < halfWidth)
+            int activeIdx = HitTest(mousePos);
+            if (activeIdx < 0 || _images[activeIdx] == null)
             {
-                // 鼠标在左侧：左侧为主动图，右侧为被动图
-                PointF norm = ScreenToNormalized(mousePos, rect1, oldEff1, _offset1, imgSize1);
-                // 主动图：以鼠标位置为中心缩放，不移动
-                _offset1 = ZoomAtNormalized(norm, rect1, oldEff1, newEff1, _offset1, imgSize1);
-                // 被动图：以相同归一化坐标缩放，并将缩放中心移到与主动图对应的位置
-                float activeLocalX = mousePos.X - rect1.Left;
-                float activeLocalY = mousePos.Y - rect1.Top;
-                PointF targetPos = new PointF(rect2.Left + activeLocalX, rect2.Top + activeLocalY);
-                _offset2 = ZoomAndMoveToTarget(norm, rect2, newEff2, imgSize2, targetPos);
+                _zoomLevel = newZoomLevel;
+                this.Invalidate();
+                return;
             }
-            else
+
+            Rectangle activeRect = GetCellRect(activeIdx);
+            Size activeImgSize = _images[activeIdx]!.Size;
+            float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
+            float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
+
+            // 主动图：以鼠标位置为中心缩放，不移动
+            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
+            _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
+
+            // 鼠标在主动图面板中的局部坐标
+            float activeLocalX = mousePos.X - activeRect.Left;
+            float activeLocalY = mousePos.Y - activeRect.Top;
+
+            // 被动图：以相同归一化坐标缩放，并将缩放中心移到对应位置
+            for (int i = 0; i < _imageCount; i++)
             {
-                // 鼠标在右侧：右侧为主动图，左侧为被动图
-                PointF norm = ScreenToNormalized(mousePos, rect2, oldEff2, _offset2, imgSize2);
-                // 主动图：以鼠标位置为中心缩放，不移动
-                _offset2 = ZoomAtNormalized(norm, rect2, oldEff2, newEff2, _offset2, imgSize2);
-                // 被动图：以相同归一化坐标缩放，并将缩放中心移到与主动图对应的位置
-                float activeLocalX = mousePos.X - rect2.Left;
-                float activeLocalY = mousePos.Y - rect2.Top;
-                PointF targetPos = new PointF(rect1.Left + activeLocalX, rect1.Top + activeLocalY);
-                _offset1 = ZoomAndMoveToTarget(norm, rect1, newEff1, imgSize1, targetPos);
+                if (i == activeIdx || _images[i] == null) continue;
+
+                Rectangle passiveRect = GetCellRect(i);
+                Size passiveImgSize = _images[i]!.Size;
+                float newEffPassive = _baseZooms[i] * newZoomLevel;
+
+                PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
+                _offsets[i] = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
             }
 
             _zoomLevel = newZoomLevel;
         }
         else
         {
-            // 单独滚轮：上下移动，步长按当前显示大小的比例计算
-            float avgZoom = (_baseZoom1 + _baseZoom2) / 2f * _zoomLevel;
+            // 单独滚轮：上下移动
+            float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Height * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
-            _offset1.Y += delta;
-            _offset2.Y += delta;
+            for (int i = 0; i < _imageCount; i++)
+                _offsets[i] = new PointF(_offsets[i].X, _offsets[i].Y + delta);
         }
 
         this.Invalidate();

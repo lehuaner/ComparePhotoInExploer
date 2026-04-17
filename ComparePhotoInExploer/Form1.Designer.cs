@@ -15,8 +15,11 @@ partial class Form1
     {
         if (disposing)
         {
-            _image1?.Dispose();
-            _image2?.Dispose();
+            if (_images != null)
+            {
+                foreach (var img in _images)
+                    img?.Dispose();
+            }
             if (components != null)
             {
                 components.Dispose();
