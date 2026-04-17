@@ -1,47 +1,72 @@
-# 图片对比工具
+# ComparePhotoInExploer
 
-这是一个Windows资源管理器右键扩展功能，用于对比两张图片的差异。
+一款 Windows 资源管理器右键扩展，用于快速对比两张图片的差异。
+
 
 ## 功能特性
 
-1. **上下文菜单集成**：在Windows资源管理器中选中2个图片文件后，右键菜单会显示"对比图片"选项
-2. **图片对比窗口**：专用的图片对比窗口，将选中的两张图片并排显示进行比较
-3. **同步移动功能**：拖动其中一张图片时，另一张图片会保持相对位置同步移动
-4. **快捷键控制**：
-   - 鼠标左键拖动：同步移动两张图片
-   - 滚轮：上下移动图片
-   - Ctrl+滚轮：左右移动图片
-   - Alt+滚轮：以鼠标指针为中心缩放图片
-5. **图片边界检测**：图片超过中间线后会自动隐藏超出部分
-6. **按键说明**：在窗口左上角显示详细的按键操作说明
+- **上下文菜单集成** - 在 Windows 资源管理器中选中 2 个图片文件后，右键菜单会显示"对比图片"选项
+- **并排对比窗口** - 专用对比窗口，将两张图片并排显示进行比较
+- **同步移动** - 拖动其中一张图片时，另一张会保持相对位置同步移动
+- **智能缩放** - 支持以鼠标指针为中心缩放图片
 
-## 技术实现
+## 快捷键
 
-- 使用C# + WinForms (.NET 8)开发
-- 符合Windows Shell扩展规范
-- 实现高效的图片渲染和变换算法
-- 与主流Windows系统版本（Windows 10及以上）兼容
+| 按键 | 功能 |
+|------|------|
+| 鼠标左键拖动 | 同步移动两张图片 |
+| 滚轮 | 上下移动图片 |
+| Ctrl + 滚轮 | 左右移动图片 |
+| Alt + 滚轮 | 以鼠标指针为中心缩放图片 |
 
-## 安装方法
+## 技术栈
 
-1. 编译项目：在项目目录中运行 `dotnet build -c Release`
-2. 安装注册表：以管理员身份运行 `InstallRegistry.ps1` 脚本
+- C# + WinForms (.NET 8)
+- Windows Shell 扩展
+- 高效图片渲染算法
+
+## 安装
+
+### 前置要求
+
+- Windows 10 或更高版本
+- .NET 8 Runtime
+
+### 编译项目
+
+```bash
+git clone https://github.com/yourusername/ComparePhotoInExploer.git
+cd ComparePhotoInExploer
+dotnet build -c Release
+```
+
+### 注册右键菜单
+
+以管理员身份运行 PowerShell 脚本：
+
+```powershell
+.\InstallRegistry.ps1
+```
 
 ## 使用方法
 
-1. 在Windows资源管理器中选择两个图片文件
-2. 右键点击，选择"对比图片"选项
-3. 在打开的对比窗口中，使用上述快捷键操作来调整图片的位置和大小
+1. 在 Windows 资源管理器中选择两个图片文件
+2. 右键点击，选择 **对比图片**
+3. 在对比窗口中使用快捷键调整图片位置和大小
 
 ## 项目结构
 
 ```
 ComparePhotoInExploer/
-├── ComparePhotoInExploer/       # 主项目目录
-│   ├── Form1.cs                 # 主窗口代码
+├── ComparePhotoInExploer/
+│   ├── Form1.cs                 # 主窗口
 │   ├── Program.cs               # 程序入口
-│   └── ComparePhotoInExploer.csproj  # 项目配置文件
+│   └── ComparePhotoInExploer.csproj
 ├── InstallRegistry.ps1          # 注册表安装脚本
-├── .gitignore                   # Git忽略文件
-└── README.md                    # 项目说明文件
+├── .gitignore
+└── README.md
 ```
+
+## License
+
+MIT License

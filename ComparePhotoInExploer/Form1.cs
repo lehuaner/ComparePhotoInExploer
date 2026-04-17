@@ -248,7 +248,7 @@ public partial class Form1 : Form
         else if (IsAltPressed())
         {
             // Alt+滚轮：以鼠标指针所指图片像素为中心缩放
-            float zoomFactor = e.Delta > 0 ? 1.1f : 0.9f;
+            float zoomFactor = e.Delta > 0 ? 1.25f : 1f/1.25f;
             float oldZoom = _zoomLevel;
             float newZoom = _zoomLevel * zoomFactor;
 
