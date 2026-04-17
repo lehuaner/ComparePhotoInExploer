@@ -8,7 +8,7 @@ public partial class Form1 : Form
     private float _zoomLevel = 1.0f;
     private PointF _offset1 = new PointF(0, 0);
     private PointF _offset2 = new PointF(0, 0);
-    private bool _showInstructions = true;
+    private bool _showInstructions = false;
     private Button _toggleButton;
 
     public Form1(string[] imagePaths)
@@ -21,9 +21,14 @@ public partial class Form1 : Form
 
         // 创建切换按钮
         _toggleButton = new Button();
-        _toggleButton.Text = "▼";
+        _toggleButton.Text = "▶";
         _toggleButton.Size = new Size(30, 30);
         _toggleButton.Location = new Point(10, 10);
+        _toggleButton.FlatStyle = FlatStyle.Flat;
+        _toggleButton.FlatAppearance.BorderSize = 0;
+        _toggleButton.FlatAppearance.MouseOverBackColor = Color.Transparent;
+        _toggleButton.FlatAppearance.MouseDownBackColor = Color.Transparent;
+        _toggleButton.BackColor = Color.Transparent;
         _toggleButton.Click += ToggleButton_Click;
         this.Controls.Add(_toggleButton);
 
@@ -93,7 +98,7 @@ public partial class Form1 : Form
 
         for (int i = 0; i < instructions.Length; i++)
         {
-            g.DrawString(instructions[i], this.Font, Brushes.Black, 10, 10 + i * 20);
+            g.DrawString(instructions[i], this.Font, Brushes.Black, 10, 40 + i * 20);
         }
     }
 
@@ -102,35 +107,48 @@ public partial class Form1 : Form
         float scaledWidth = image.Width * zoom;
         float scaledHeight = image.Height * zoom;
 
-        float x = drawArea.Left + (drawArea.Width - scaledWidth) / 2 + offset.X;
-        float y = drawArea.Top + (drawArea.Height - scaledHeight) / 2 + offset.Y;
+        float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
+        float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
 
-        // 检查图片是否超过中间线，如果超过则不绘制
         int halfWidth = this.ClientSize.Width / 2;
-        if (isLeftImage && x + scaledWidth > halfWidth)
-        {
-            // 左侧图片超过中间线，只绘制不超过的部分
-            float visibleWidth = halfWidth - x;
-            if (visibleWidth > 0)
-            {
-                g.DrawImage(image, x, y, visibleWidth, scaledHeight);
-            }
-        }
-        else if (!isLeftImage && x < halfWidth)
-        {
-            // 右侧图片超过中间线，只绘制不超过的部分
-            float visibleX = halfWidth;
-            float visibleWidth = x + scaledWidth - halfWidth;
-            if (visibleWidth > 0)
-            {
-                g.DrawImage(image, visibleX, y, visibleWidth, scaledHeight);
-            }
-        }
-        else
-        {
-            // 图片未超过中间线，正常绘制
-            g.DrawImage(image, x, y, scaledWidth, scaledHeight);
-        }
+        int height = this.ClientSize.Height;
+
+        // 计算可见区域（图片与drawArea的交集，再裁剪到对应半区）
+        float visLeft = Math.Max(imgX, drawArea.Left);
+        float visTop = Math.Max(imgY, drawArea.Top);
+        float visRight = Math.Min(imgX + scaledWidth, drawArea.Right);
+        float visBottom = Math.Min(imgY + scaledHeight, drawArea.Bottom);
+
+        // 左侧图片不能超过中间线
+        if (isLeftImage && visRight > halfWidth)
+            visRight = halfWidth;
+        // 右侧图片不能超过中间线
+        if (!isLeftImage && visLeft < halfWidth)
+            visLeft = halfWidth;
+
+        float visWidth = visRight - visLeft;
+        float visHeight = visBottom - visTop;
+
+        if (visWidth <= 0 || visHeight <= 0)
+            return;
+
+        // 设置裁剪区域
+        g.SetClip(isLeftImage
+            ? new Rectangle(0, 0, halfWidth, height)
+            : new Rectangle(halfWidth, 0, halfWidth, height));
+
+        // 计算源矩形：可见区域对应到原图的坐标
+        float srcX = (visLeft - imgX) / zoom;
+        float srcY = (visTop - imgY) / zoom;
+        float srcW = visWidth / zoom;
+        float srcH = visHeight / zoom;
+
+        g.DrawImage(image,
+            new RectangleF(visLeft, visTop, visWidth, visHeight),
+            new RectangleF(srcX, srcY, srcW, srcH),
+            GraphicsUnit.Pixel);
+
+        g.ResetClip();
     }
 
     private void Form1_MouseDown(object sender, MouseEventArgs e)
@@ -164,6 +182,60 @@ public partial class Form1 : Form
         _isDragging = false;
     }
 
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        // 拦截 Alt 键，防止其激活系统菜单导致滚轮事件异常
+        if (keyData == Keys.Alt || keyData == (Keys.Alt | Keys.Menu))
+            return true;
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    /// <summary>
+    /// 从屏幕坐标反算指针指向图片的像素坐标（浮点数，精确到亚像素）
+    /// </summary>
+    private PointF ScreenToImagePixel(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    {
+        float scaledWidth = imageSize.Width * zoom;
+        float scaledHeight = imageSize.Height * zoom;
+        float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
+        float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
+
+        float pxX = (screenPos.X - imgX) / zoom;
+        float pxY = (screenPos.Y - imgY) / zoom;
+        return new PointF(pxX, pxY);
+    }
+
+    /// <summary>
+    /// 以图片像素坐标为缩放中心，缩放后该像素的屏幕位置严格不变，按比例计算新偏移
+    /// </summary>
+    private PointF ZoomAtPixel(PointF pixel, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
+    {
+        float newScaledWidth = imageSize.Width * newZoom;
+        float newScaledHeight = imageSize.Height * newZoom;
+
+        // 缩放前该像素在屏幕上的位置
+        float oldScaledWidth = imageSize.Width * oldZoom;
+        float oldScaledHeight = imageSize.Height * oldZoom;
+        float oldScreenX = drawArea.Left + (drawArea.Width - oldScaledWidth) / 2f + oldOffset.X + pixel.X * oldZoom;
+        float oldScreenY = drawArea.Top + (drawArea.Height - oldScaledHeight) / 2f + oldOffset.Y + pixel.Y * oldZoom;
+
+        // 缩放后该像素的屏幕位置公式：
+        //   screenX = drawArea.Left + (drawArea.Width - newScaledWidth) / 2 + newOffset.X + pixel.X * newZoom
+        // 要求 screenX == oldScreenX，解出 newOffset.X
+        float newOffsetX = oldScreenX - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - pixel.X * newZoom;
+        float newOffsetY = oldScreenY - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - pixel.Y * newZoom;
+
+        return new PointF(newOffsetX, newOffsetY);
+    }
+
+    /// <summary>
+    /// 判断当前是否按住 Alt 键
+    /// </summary>
+    private bool IsAltPressed()
+    {
+        return (ModifierKeys & Keys.Alt) == Keys.Alt;
+    }
+
     private void Form1_MouseWheel(object sender, MouseEventArgs e)
     {
         if (ModifierKeys == Keys.Control)
@@ -173,39 +245,51 @@ public partial class Form1 : Form
             _offset1.X += delta;
             _offset2.X += delta;
         }
-        else if (ModifierKeys == Keys.Alt)
+        else if (IsAltPressed())
         {
-            // Alt+滚轮：以鼠标指针为中心缩放
+            // Alt+滚轮：以鼠标指针所指图片像素为中心缩放
             float zoomFactor = e.Delta > 0 ? 1.1f : 0.9f;
-            
-            // 计算鼠标在窗口中的相对位置
-            Point mousePos = e.Location;
+            float oldZoom = _zoomLevel;
+            float newZoom = _zoomLevel * zoomFactor;
+
+            PointF mousePos = e.Location;
             int halfWidth = this.ClientSize.Width / 2;
-            
-            // 计算缩放前鼠标在图片上的位置
-            PointF mouseInImage1 = new PointF(
-                (mousePos.X - halfWidth / 2 - _offset1.X) / _zoomLevel,
-                (mousePos.Y - this.ClientSize.Height / 2 - _offset1.Y) / _zoomLevel
-            );
-            
-            PointF mouseInImage2 = new PointF(
-                (mousePos.X - halfWidth - halfWidth / 2 - _offset2.X) / _zoomLevel,
-                (mousePos.Y - this.ClientSize.Height / 2 - _offset2.Y) / _zoomLevel
-            );
-            
-            // 执行缩放
-            _zoomLevel *= zoomFactor;
-            
-            // 调整偏移量，使鼠标指针位置保持不变
-            _offset1.X = mousePos.X - halfWidth / 2 - mouseInImage1.X * _zoomLevel;
-            _offset1.Y = mousePos.Y - this.ClientSize.Height / 2 - mouseInImage1.Y * _zoomLevel;
-            
-            _offset2.X = mousePos.X - halfWidth - halfWidth / 2 - mouseInImage2.X * _zoomLevel;
-            _offset2.Y = mousePos.Y - this.ClientSize.Height / 2 - mouseInImage2.Y * _zoomLevel;
+            int height = this.ClientSize.Height;
+
+            Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
+            Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
+
+            // 加载图片尺寸
+            Size imgSize1, imgSize2;
+            using (Image img1 = Image.FromFile(_imagePaths[0]))
+                imgSize1 = img1.Size;
+            using (Image img2 = Image.FromFile(_imagePaths[1]))
+                imgSize2 = img2.Size;
+
+            if (mousePos.X < halfWidth)
+            {
+                // 鼠标在左侧：先从左侧图算出指针指向的像素坐标
+                PointF pixel = ScreenToImagePixel(mousePos, rect1, oldZoom, _offset1, imgSize1);
+                // 左侧图以该像素为中心缩放
+                _offset1 = ZoomAtPixel(pixel, rect1, oldZoom, newZoom, _offset1, imgSize1);
+                // 右侧图也以相同的像素坐标为缩放中心（按比例计算）
+                _offset2 = ZoomAtPixel(pixel, rect2, oldZoom, newZoom, _offset2, imgSize2);
+            }
+            else
+            {
+                // 鼠标在右侧：先从右侧图算出指针指向的像素坐标
+                PointF pixel = ScreenToImagePixel(mousePos, rect2, oldZoom, _offset2, imgSize2);
+                // 右侧图以该像素为中心缩放
+                _offset2 = ZoomAtPixel(pixel, rect2, oldZoom, newZoom, _offset2, imgSize2);
+                // 左侧图也以相同的像素坐标为缩放中心（按比例计算）
+                _offset1 = ZoomAtPixel(pixel, rect1, oldZoom, newZoom, _offset1, imgSize1);
+            }
+
+            _zoomLevel = newZoom;
         }
         else
         {
-            // 单独无快捷键滚轮：上下移动
+            // 单独滚轮：上下移动
             int delta = e.Delta > 0 ? -10 : 10;
             _offset1.Y += delta;
             _offset2.Y += delta;
