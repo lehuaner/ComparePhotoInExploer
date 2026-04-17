@@ -128,11 +128,6 @@ public partial class Form1 : Form
 
         try
         {
-            if (_showInstructions)
-            {
-                DrawKeyInstructions(e.Graphics);
-            }
-
             if (_image1 == null || _image2 == null)
             {
                 e.Graphics.DrawString("图片加载失败", this.Font, Brushes.Red, 10, 10);
@@ -141,6 +136,11 @@ public partial class Form1 : Form
 
             int halfWidth = this.ClientSize.Width / 2;
             int height = this.ClientSize.Height;
+
+            // 全局绘制棋盘格背景
+            EnsureCheckerBrush();
+            e.Graphics.FillRectangle(_checkerBrush!, 0, 0, halfWidth, height);
+            e.Graphics.FillRectangle(_checkerBrush!, halfWidth, 0, halfWidth, height);
 
             // 每张图使用独立的实际缩放
             Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
@@ -151,6 +151,12 @@ public partial class Form1 : Form
 
             using var pen = new Pen(Color.Black, 2);
             e.Graphics.DrawLine(pen, halfWidth, 0, halfWidth, height);
+
+            // 按键提示在最上层绘制
+            if (_showInstructions)
+            {
+                DrawKeyInstructions(e.Graphics);
+            }
         }
         catch (Exception ex)
         {
@@ -168,10 +174,35 @@ public partial class Form1 : Form
             "- Alt+滚轮: 以鼠标指针为中心缩放图片"
         };
 
+        float boxWidth = 320f;
+        float boxHeight = instructions.Length * 20 + 10;
+        using (var bgBrush = new SolidBrush(Color.FromArgb(200, 255, 255, 255)))
+        {
+            g.FillRectangle(bgBrush, 5, 35, boxWidth, boxHeight);
+        }
+
         for (int i = 0; i < instructions.Length; i++)
         {
             g.DrawString(instructions[i], this.Font, Brushes.Black, 10, 40 + i * 20);
         }
+    }
+
+    // 棋盘格缓存
+    private TextureBrush? _checkerBrush;
+
+    private void EnsureCheckerBrush()
+    {
+        if (_checkerBrush != null) return;
+
+        int size = 8;
+        using var bmp = new Bitmap(size * 2, size * 2);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.FillRectangle(Brushes.White, 0, 0, size * 2, size * 2);
+            g.FillRectangle(Brushes.LightGray, 0, 0, size, size);
+            g.FillRectangle(Brushes.LightGray, size, size, size, size);
+        }
+        _checkerBrush = new TextureBrush(bmp);
     }
 
     private void DrawImage(Graphics g, Image image, Rectangle drawArea, PointF offset, float zoom, bool isLeftImage)
