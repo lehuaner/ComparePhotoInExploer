@@ -486,7 +486,9 @@ public partial class Form1 : Form
         g.FillRectangle(bgBrush, rect);
 
         using var fgBrush = new SolidBrush(fg);
-        using var font = new Font("Segoe UI", 9F);
+        // 最大化/还原图标用更大字号
+        float fontSize = (text == "□" || text == "❐") ? 12F : 9F;
+        using var font = new Font("Segoe UI", fontSize);
         var size = g.MeasureString(text, font);
         g.DrawString(text, font, fgBrush,
             rect.Left + (rect.Width - size.Width) / 2,
@@ -662,6 +664,15 @@ public partial class Form1 : Form
             }
         }
 
+        // 点击主操作区时，自动收起历史记录和操作说明
+        if (!_historyBarData.IsCollapsed || _showHelp)
+        {
+            _historyBarData.Collapse();
+            _showHelp = false;
+            _hoverHistoryGroup = -1;
+            this.Invalidate();
+        }
+
         // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
@@ -810,6 +821,14 @@ public partial class Form1 : Form
 
     private void Form1_MouseWheel(object? sender, MouseEventArgs e)
     {
+        // 滚动操作主操作区时，自动收起历史记录和操作说明
+        if (!_historyBarData.IsCollapsed || _showHelp)
+        {
+            _historyBarData.Collapse();
+            _showHelp = false;
+            _hoverHistoryGroup = -1;
+        }
+
         if (ModifierKeys == Keys.Control)
         {
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
