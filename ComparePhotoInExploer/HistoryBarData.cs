@@ -36,7 +36,7 @@ public class HistoryBarData
     /// <summary>
     /// 加载历史组数据及缩略图
     /// </summary>
-    public void LoadGroups(List<HistoryGroup> groups)
+    public void LoadGroups(List<HistoryGroup> groups, ThemeColorSet? colors = null)
     {
         if (groups == null) groups = new List<HistoryGroup>();
 
@@ -56,17 +56,17 @@ public class HistoryBarData
             {
                 var pathHash = HistoryData.GetPathHash(_groups[gi].ImagePaths[ii]);
                 var thumb = HistoryData.LoadThumbnail(pathHash);
-                list.Add(thumb ?? CreatePlaceholder());
+                list.Add(thumb ?? CreatePlaceholder(colors));
             }
             _thumbnails[_groups[gi].Id] = list;
         }
     }
 
-    private Image CreatePlaceholder()
+    private Image CreatePlaceholder(ThemeColorSet? colors = null)
     {
         var bmp = new Bitmap(ThumbnailSize, ThumbnailSize);
         using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.FromArgb(230, 230, 230));
+        g.Clear(colors?.HistoryPlaceholderBg ?? Color.FromArgb(230, 230, 230));
         return bmp;
     }
 
@@ -127,7 +127,7 @@ public class HistoryBarData
     /// <summary>
     /// 绘制历史记录覆盖层
     /// </summary>
-    public void Draw(Graphics g, int drawX, int drawY, int drawWidth, int hoverGroupIndex)
+    public void Draw(Graphics g, int drawX, int drawY, int drawWidth, int hoverGroupIndex, ThemeColorSet colors)
     {
         if (_collapsed || _groups.Count == 0) return;
 
@@ -142,12 +142,12 @@ public class HistoryBarData
         }
         totalHeight += GroupPadding;
 
-        // 半透明深色背景
-        using var bgBrush = new SolidBrush(Color.FromArgb(200, 24, 24, 24));
+        // 半透明背景
+        using var bgBrush = new SolidBrush(colors.HistoryOverlayBg);
         g.FillRectangle(bgBrush, drawX, drawY, drawWidth, totalHeight);
 
         // 底部分割线
-        using var bottomPen = new Pen(Color.FromArgb(80, 80, 80), 1);
+        using var bottomPen = new Pen(colors.HistoryBorder, 1);
         g.DrawLine(bottomPen, drawX, drawY + totalHeight - 1, drawX + drawWidth, drawY + totalHeight - 1);
 
         for (int gi = 0; gi < _groups.Count; gi++)
@@ -163,15 +163,15 @@ public class HistoryBarData
             // 悬停高亮 + 边框
             if (gi == hoverGroupIndex)
             {
-                using var hlBrush = new SolidBrush(Color.FromArgb(40, 100, 149, 237));
+                using var hlBrush = new SolidBrush(colors.HistoryHoverBg);
                 g.FillRectangle(hlBrush, gx, gy, groupBounds.Width, groupBounds.Height);
-                using var hlPen = new Pen(Color.FromArgb(100, 149, 237), 1);
+                using var hlPen = new Pen(colors.HistoryHoverBorder, 1);
                 g.DrawRectangle(hlPen, gx, gy, groupBounds.Width, groupBounds.Height);
             }
             else
             {
                 // 每个组画边框
-                using var borderPen = new Pen(Color.FromArgb(80, 80, 80), 1);
+                using var borderPen = new Pen(colors.HistoryBorder, 1);
                 g.DrawRectangle(borderPen, gx, gy, groupBounds.Width, groupBounds.Height);
             }
 

@@ -23,12 +23,19 @@ public partial class Form1 : Form
     private List<HistoryGroup> _historyGroups = new();
     private int _hoverHistoryGroup = -1; // 悬停的历史组索引
 
+    // 主题
+    private AppTheme _currentTheme = AppTheme.Dark;
+    private ThemeColorSet _colors = ThemeColorSet.Dark;
+
     // 自绘标题栏
     private const int TitleBarH = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
+
+    // 拖放
+    private bool _isDragOver = false; // 是否有文件正在拖入
 
     // Win32 拖拽移动
     [DllImport("user32.dll")]
@@ -38,22 +45,31 @@ public partial class Form1 : Form
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HTCAPTION = 2;
 
+    // Win32 监听系统主题变化
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int RegisterWindowMessage(string lpString);
+    private readonly int _wmSettingChange = RegisterWindowMessage("WM_SETTINGCHANGE");
+
     public Form1(string[] imagePaths)
     {
         InitializeComponent();
 
+        // 加载主题设置
+        LoadThemeSetting();
+        ApplyTheme(_currentTheme);
+
         _imagePaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
-        _imageCount = Math.Clamp(_imagePaths.Length, 1, 9);
-        this.Text = $"图片对比 ({_imageCount}张)";
+        _imageCount = Math.Clamp(_imagePaths.Length, 0, 9);
+        this.Text = _imageCount > 0 ? $"图片对比 ({_imageCount}张)" : "图片对比";
 
         // 计算网格尺寸
-        (_cols, _rows) = GetGridLayout(_imageCount);
+        (_cols, _rows) = GetGridLayout(Math.Max(1, _imageCount));
 
         // 初始化每张图的数据
-        _images = new Image?[_imageCount];
-        _baseZooms = new float[_imageCount];
-        _offsets = new PointF[_imageCount];
-        for (int i = 0; i < _imageCount; i++)
+        _images = new Image?[Math.Max(1, _imageCount)];
+        _baseZooms = new float[Math.Max(1, _imageCount)];
+        _offsets = new PointF[Math.Max(1, _imageCount)];
+        for (int i = 0; i < _offsets.Length; i++)
             _offsets[i] = new PointF(0, 0);
 
         // 无边框 + 双缓冲
@@ -61,6 +77,9 @@ public partial class Form1 : Form
         this.DoubleBuffered = true;
         this.StartPosition = FormStartPosition.CenterScreen;
         this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
+
+        // 允许拖放
+        this.AllowDrop = true;
 
         // 创建历史记录数据
         _historyBarData = new HistoryBarData();
@@ -72,17 +91,166 @@ public partial class Form1 : Form
         this.MouseWheel += Form1_MouseWheel;
         this.Paint += Form1_Paint;
         this.KeyDown += Form1_KeyDown;
+        this.DragEnter += Form1_DragEnter;
+        this.DragOver += Form1_DragOver;
+        this.DragLeave += Form1_DragLeave;
+        this.DragDrop += Form1_DragDrop;
 
         // 加载图片到内存缓存
-        LoadImages();
+        if (_imageCount > 0)
+            LoadImages();
 
         // 加载历史记录
         _historyGroups = HistoryData.Load();
         _historyBarData.LoadGroups(_historyGroups);
 
         // 保存当前组到历史记录（异步处理缩略图生成，避免阻塞UI）
+        if (_imageCount > 0)
+            SaveCurrentToHistory();
+    }
+
+    /// <summary>
+    /// 重写以接收系统主题变化消息
+    /// </summary>
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == _wmSettingChange && _currentTheme == AppTheme.System)
+        {
+            // 系统主题变了，重新应用
+            ApplyTheme(AppTheme.System);
+            this.Invalidate();
+        }
+        base.WndProc(ref m);
+    }
+
+    #region 主题管理
+
+    private static readonly string ThemeSettingFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "AppData", "Local", "ComparePhotoInExploer", "theme.txt");
+
+    private void LoadThemeSetting()
+    {
+        try
+        {
+            if (File.Exists(ThemeSettingFile))
+            {
+                var text = File.ReadAllText(ThemeSettingFile).Trim();
+                if (Enum.TryParse<AppTheme>(text, out var theme))
+                {
+                    _currentTheme = theme;
+                    return;
+                }
+            }
+        }
+        catch { }
+        _currentTheme = AppTheme.System;
+    }
+
+    private void SaveThemeSetting()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(ThemeSettingFile)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(ThemeSettingFile, _currentTheme.ToString());
+        }
+        catch { }
+    }
+
+    private void ApplyTheme(AppTheme theme)
+    {
+        _currentTheme = theme;
+        _colors = ThemeColorSet.FromTheme(theme);
+        _checkerBrush = null; // 重建棋盘格
+        SaveThemeSetting();
+    }
+
+    private void CycleTheme()
+    {
+        var next = _currentTheme switch
+        {
+            AppTheme.Dark => AppTheme.Light,
+            AppTheme.Light => AppTheme.System,
+            _ => AppTheme.Dark
+        };
+        ApplyTheme(next);
+        this.Invalidate();
+    }
+
+    private static string GetThemeLabel(AppTheme theme) => theme switch
+    {
+        AppTheme.Dark => "暗色",
+        AppTheme.Light => "亮色",
+        _ => "跟随系统"
+    };
+
+    #endregion
+
+    #region 拖放支持
+
+    private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".ico", ".svg" };
+
+    private static bool IsImageFile(string path)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        return ImageExtensions.Contains(ext);
+    }
+
+    private void Form1_DragEnter(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+        {
+            var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            if (files != null && files.Any(IsImageFile))
+            {
+                e.Effect = DragDropEffects.Copy;
+                _isDragOver = true;
+                this.Invalidate();
+                return;
+            }
+        }
+        e.Effect = DragDropEffects.None;
+    }
+
+    private void Form1_DragOver(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+        {
+            var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+            if (files != null && files.Any(IsImageFile))
+            {
+                e.Effect = DragDropEffects.Copy;
+                return;
+            }
+        }
+        e.Effect = DragDropEffects.None;
+    }
+
+    private void Form1_DragLeave(object? sender, EventArgs e)
+    {
+        _isDragOver = false;
+        this.Invalidate();
+    }
+
+    private void Form1_DragDrop(object? sender, DragEventArgs e)
+    {
+        _isDragOver = false;
+
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true) return;
+
+        var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
+        if (files == null) return;
+
+        var imageFiles = files.Where(IsImageFile).ToArray();
+        if (imageFiles.Length == 0) return;
+
+        // 清空当前对比并加载新图片组
+        LoadNewGroup(imageFiles);
         SaveCurrentToHistory();
     }
+
+    #endregion
 
     /// <summary>
     /// 将当前打开的图片组保存到历史记录
@@ -144,7 +312,7 @@ public partial class Form1 : Form
         if (paths == null || paths.Length == 0) return;
 
         // 检查是否与当前图片相同
-        if (_imagePaths.SequenceEqual(paths))
+        if (_imagePaths != null && _imagePaths.SequenceEqual(paths))
             return;
 
         // 切换到该组图片
@@ -213,7 +381,7 @@ public partial class Form1 : Form
         for (int i = 0; i < _offsets.Length; i++)
             _offsets[i] = new PointF(0, 0);
         
-        this.Text = "图片对比 (无图片)";
+        this.Text = "图片对比";
         this.Invalidate();
     }
 
@@ -222,6 +390,7 @@ public partial class Form1 : Form
     /// </summary>
     private void LoadNewGroup(string[] paths)
     {
+        // 先清空旧图片
         for (int i = 0; i < _images.Length; i++)
             _images[i]?.Dispose();
 
@@ -346,9 +515,6 @@ public partial class Form1 : Form
 
     private void Form1_Paint(object? sender, PaintEventArgs e)
     {
-        if (_imagePaths == null || _imagePaths.Length == 0)
-            return;
-
         try
         {
             // 历史记录和按键说明互斥
@@ -360,36 +526,51 @@ public partial class Form1 : Form
             // 绘制自绘标题栏
             DrawTitleBar(e.Graphics);
 
-            // 图片区域（不因历史记录展开而偏移）
-            for (int i = 0; i < _imageCount; i++)
+            if (_imageCount > 0)
             {
-                var rect = GetCellRect(i);
-
-                // 棋盘格背景
-                e.Graphics.FillRectangle(_checkerBrush!, rect);
-
-                // 绘制图片
-                if (_images[i] != null)
+                // 图片区域（不因历史记录展开而偏移）
+                int totalCells = _cols * _rows;
+                for (int i = 0; i < totalCells; i++)
                 {
-                    DrawImage(e.Graphics, _images[i]!, rect, _offsets[i], GetEffectiveZoom(i));
+                    var rect = GetCellRect(i);
+
+                    // 棋盘格背景
+                    e.Graphics.FillRectangle(_checkerBrush!, rect);
+
+                    // 绘制图片（仅在对应格子有图片时）
+                    if (i < _imageCount && _images[i] != null)
+                    {
+                        DrawImage(e.Graphics, _images[i]!, rect, _offsets[i], GetEffectiveZoom(i));
+                    }
                 }
+
+                // 绘制网格分割线
+                using var pen = new Pen(_colors.GridLineColor, 2);
+                int topOffset = TitleBarH;
+                int availH = this.ClientSize.Height - topOffset;
+                int cellW = this.ClientSize.Width / _cols;
+                int cellH = availH / _rows;
+                for (int c = 1; c < _cols; c++)
+                    e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
+                for (int r = 1; r < _rows; r++)
+                    e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
+            }
+            else
+            {
+                // 无图片时显示提示
+                DrawEmptyHint(e.Graphics);
             }
 
-            // 绘制网格分割线
-            using var pen = new Pen(Color.Black, 2);
-            int topOffset = TitleBarH;
-            int availH = this.ClientSize.Height - topOffset;
-            int cellW = this.ClientSize.Width / _cols;
-            int cellH = availH / _rows;
-            for (int c = 1; c < _cols; c++)
-                e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
-            for (int r = 1; r < _rows; r++)
-                e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
+            // 拖放覆盖提示
+            if (_isDragOver)
+            {
+                DrawDropOverlay(e.Graphics);
+            }
 
             // 历史记录覆盖层（浮在图片区域上方）
             if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
             {
-                _historyBarData.Draw(e.Graphics, 0, TitleBarH, this.ClientSize.Width, _hoverHistoryGroup);
+                _historyBarData.Draw(e.Graphics, 0, TitleBarH, this.ClientSize.Width, _hoverHistoryGroup, _colors);
             }
 
             // 按键说明（由标题栏按钮触发，与历史记录互斥）
@@ -405,14 +586,61 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 自绘标题栏 — 左侧"历史记录"+"操作说明"按钮，右侧最小化/最大化/关闭
+    /// 无图片时的提示
+    /// </summary>
+    private void DrawEmptyHint(Graphics g)
+    {
+        int topOffset = TitleBarH;
+        int availW = this.ClientSize.Width;
+        int availH = this.ClientSize.Height - topOffset;
+
+        // 填充背景
+        using var bgBrush = new SolidBrush(_colors.CheckerLight);
+        g.FillRectangle(bgBrush, 0, topOffset, availW, availH);
+
+        string hint = "拖入图片进行对比";
+        using var font = new Font("Microsoft YaHei UI", 16F);
+        using var fgBrush = new SolidBrush(_colors.DropHintFg);
+        var size = g.MeasureString(hint, font);
+        float x = (availW - size.Width) / 2;
+        float y = topOffset + (availH - size.Height) / 2;
+        g.DrawString(hint, font, fgBrush, x, y);
+    }
+
+    /// <summary>
+    /// 拖放时的覆盖层提示
+    /// </summary>
+    private void DrawDropOverlay(Graphics g)
+    {
+        int topOffset = TitleBarH;
+        int availW = this.ClientSize.Width;
+        int availH = this.ClientSize.Height - topOffset;
+
+        using var bgBrush = new SolidBrush(Color.FromArgb(30, 100, 149, 237));
+        g.FillRectangle(bgBrush, 0, topOffset, availW, availH);
+
+        // 虚线边框
+        using var borderPen = new Pen(_colors.DropHintBorder, 3) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+        g.DrawRectangle(borderPen, 6, topOffset + 6, availW - 12, availH - 12);
+
+        string hint = "释放以加载图片";
+        using var font = new Font("Microsoft YaHei UI", 16F);
+        using var fgBrush = new SolidBrush(_colors.DropHintBorder);
+        var size = g.MeasureString(hint, font);
+        float x = (availW - size.Width) / 2;
+        float y = topOffset + (availH - size.Height) / 2;
+        g.DrawString(hint, font, fgBrush, x, y);
+    }
+
+    /// <summary>
+    /// 自绘标题栏 — 左侧"历史记录"+"操作说明"+"主题"按钮，右侧最小化/最大化/关闭
     /// </summary>
     private void DrawTitleBar(Graphics g)
     {
         int w = this.ClientSize.Width;
 
         // 标题栏背景
-        using var bgBrush = new SolidBrush(Color.FromArgb(32, 32, 32));
+        using var bgBrush = new SolidBrush(_colors.TitleBarBg);
         g.FillRectangle(bgBrush, 0, 0, w, TitleBarH);
 
         // 按钮起始位置
@@ -421,12 +649,12 @@ public partial class Form1 : Form
         // 历史记录按钮
         _btnHistory = new Rectangle(btnX, 0, 72, TitleBarH);
         bool historyActive = !_historyBarData.IsCollapsed;
-        Color historyBg = historyActive ? Color.FromArgb(62, 62, 62) :
-                          _hoverHistory ? Color.FromArgb(50, 50, 50) : Color.Transparent;
+        Color historyBg = historyActive ? _colors.TitleBarBtnActiveBg :
+                          _hoverHistory ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var historyBgBrush = new SolidBrush(historyBg))
             g.FillRectangle(historyBgBrush, _btnHistory);
         using var historyFont = new Font("Microsoft YaHei UI", 9F);
-        using var historyFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
+        using var historyFgBrush = new SolidBrush(_colors.TitleBarFg);
         var historySize = g.MeasureString("历史记录", historyFont);
         g.DrawString("历史记录", historyFont, historyFgBrush,
             _btnHistory.Left + (_btnHistory.Width - historySize.Width) / 2,
@@ -435,16 +663,31 @@ public partial class Form1 : Form
         // 操作说明按钮
         btnX += 72 + 2;
         _btnHelp = new Rectangle(btnX, 0, 72, TitleBarH);
-        Color helpBg = _showHelp ? Color.FromArgb(62, 62, 62) :
-                       _hoverHelp ? Color.FromArgb(50, 50, 50) : Color.Transparent;
+        Color helpBg = _showHelp ? _colors.TitleBarBtnActiveBg :
+                       _hoverHelp ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var helpBgBrush = new SolidBrush(helpBg))
             g.FillRectangle(helpBgBrush, _btnHelp);
         using var helpFont = new Font("Microsoft YaHei UI", 9F);
-        using var helpFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
+        using var helpFgBrush = new SolidBrush(_colors.TitleBarFg);
         var helpSize = g.MeasureString("操作说明", helpFont);
         g.DrawString("操作说明", helpFont, helpFgBrush,
             _btnHelp.Left + (_btnHelp.Width - helpSize.Width) / 2,
             _btnHelp.Top + (_btnHelp.Height - helpSize.Height) / 2);
+
+        // 主题切换按钮
+        btnX += 72 + 2;
+        string themeLabel = GetThemeLabel(_currentTheme);
+        using var themeFont = new Font("Microsoft YaHei UI", 9F);
+        var themeLabelSize = g.MeasureString(themeLabel, themeFont);
+        int themeBtnW = (int)themeLabelSize.Width + 16;
+        _btnTheme = new Rectangle(btnX, 0, themeBtnW, TitleBarH);
+        Color themeBg = _hoverTheme ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var themeBgBrush = new SolidBrush(themeBg))
+            g.FillRectangle(themeBgBrush, _btnTheme);
+        using var themeFgBrush = new SolidBrush(_colors.TitleBarFg);
+        g.DrawString(themeLabel, themeFont, themeFgBrush,
+            _btnTheme.Left + (_btnTheme.Width - themeLabelSize.Width) / 2,
+            _btnTheme.Top + (_btnTheme.Height - themeLabelSize.Height) / 2);
 
         // 窗口控制按钮区域
         int btnW = 46;
@@ -468,18 +711,18 @@ public partial class Form1 : Form
         Color bg, fg;
         if (isClose && hover)
         {
-            bg = Color.FromArgb(232, 17, 35);
+            bg = _colors.TitleBarCloseHoverBg;
             fg = Color.White;
         }
         else if (hover)
         {
-            bg = Color.FromArgb(62, 62, 62);
+            bg = _colors.TitleBarBtnHoverBg;
             fg = Color.White;
         }
         else
         {
             bg = Color.Transparent;
-            fg = Color.FromArgb(200, 200, 200);
+            fg = _colors.TitleBarBtnFg;
         }
 
         using var bgBrush = new SolidBrush(bg);
@@ -503,26 +746,28 @@ public partial class Form1 : Form
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片",
+            "- 拖入图片: 加载新的图片组进行对比",
             "- 标题栏'历史记录': 点击展开/收起历史对比记录",
-            "- 标题栏'按键说明': 点击查看操作说明"
+            "- 标题栏'按键说明': 点击查看操作说明",
+            "- 标题栏主题按钮: 切换暗色/亮色/跟随系统"
         };
 
         float boxWidth = 380f;
         float boxHeight = instructions.Length * 22 + 20;
         int topOffset = TitleBarH;
-        using (var bgBrush = new SolidBrush(Color.FromArgb(230, 32, 32, 32)))
+        using (var bgBrush = new SolidBrush(_colors.HelpPanelBg))
         {
             g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
         }
 
-        using var borderPen = new Pen(Color.FromArgb(80, 80, 80), 1);
+        using var borderPen = new Pen(_colors.HelpPanelBorder, 1);
         g.DrawRectangle(borderPen, 5, topOffset + 5, boxWidth, boxHeight);
 
         for (int i = 0; i < instructions.Length; i++)
         {
             using var brush = i == 0 
-                ? new SolidBrush(Color.FromArgb(255, 220, 220, 220))
-                : new SolidBrush(Color.FromArgb(200, 200, 200));
+                ? new SolidBrush(_colors.HelpTitleFg)
+                : new SolidBrush(_colors.HelpTextFg);
             g.DrawString(instructions[i], i == 0 ? new Font(this.Font, FontStyle.Bold) : this.Font, brush, 12, topOffset + 10 + i * 22);
         }
     }
@@ -538,9 +783,9 @@ public partial class Form1 : Form
         using var bmp = new Bitmap(size * 2, size * 2);
         using (var g = Graphics.FromImage(bmp))
         {
-            g.FillRectangle(Brushes.White, 0, 0, size * 2, size * 2);
-            g.FillRectangle(Brushes.LightGray, 0, 0, size, size);
-            g.FillRectangle(Brushes.LightGray, size, size, size, size);
+            g.FillRectangle(new SolidBrush(_colors.CheckerLight), 0, 0, size * 2, size * 2);
+            g.FillRectangle(new SolidBrush(_colors.CheckerDark), 0, 0, size, size);
+            g.FillRectangle(new SolidBrush(_colors.CheckerDark), size, size, size, size);
         }
         _checkerBrush = new TextureBrush(bmp);
     }
@@ -620,6 +865,12 @@ public partial class Form1 : Form
                 this.Invalidate();
                 return;
             }
+            // 主题切换按钮
+            if (_btnTheme.Contains(e.Location))
+            {
+                CycleTheme();
+                return;
+            }
             // 拖动窗口
             ReleaseCapture();
             SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
@@ -691,14 +942,17 @@ public partial class Form1 : Form
             bool newHoverClose = _btnClose.Contains(e.Location);
             bool newHoverHelp = _btnHelp.Contains(e.Location);
             bool newHoverHistory = _btnHistory.Contains(e.Location);
+            bool newHoverTheme = _btnTheme.Contains(e.Location);
 
-            if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory)
+            if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
+                newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
                 _hoverClose = newHoverClose;
                 _hoverHelp = newHoverHelp;
                 _hoverHistory = newHoverHistory;
+                _hoverTheme = newHoverTheme;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
             }
             return;
