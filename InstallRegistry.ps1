@@ -1,4 +1,4 @@
-# 图片对比工具注册表安装脚本
+﻿# 图片对比工具注册表安装脚本
 
 # 获取脚本所在目录
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Definition

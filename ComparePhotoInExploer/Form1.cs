@@ -11,6 +11,10 @@ public partial class Form1 : Form
     private bool _showInstructions = false;
     private Button _toggleButton;
 
+    // 缓存图片，避免每次 Paint 从磁盘重新加载
+    private Image? _image1;
+    private Image? _image2;
+
     public Form1(string[] imagePaths)
     {
         InitializeComponent();
@@ -38,6 +42,61 @@ public partial class Form1 : Form
         this.MouseUp += Form1_MouseUp;
         this.MouseWheel += Form1_MouseWheel;
         this.Paint += Form1_Paint;
+        this.Resize += Form1_Resize;
+
+        // 加载图片到内存缓存
+        LoadImages();
+    }
+
+    private void LoadImages()
+    {
+        if (_imagePaths == null || _imagePaths.Length < 2)
+            return;
+
+        try
+        {
+            _image1?.Dispose();
+            _image2?.Dispose();
+
+            // 使用 FileStream 读取后创建独立副本，避免锁定文件
+            using var fs1 = new FileStream(_imagePaths[0], FileMode.Open, FileAccess.Read);
+            _image1 = Image.FromStream(fs1);
+
+            using var fs2 = new FileStream(_imagePaths[1], FileMode.Open, FileAccess.Read);
+            _image2 = Image.FromStream(fs2);
+        }
+        catch
+        {
+            // 加载失败时保持为 null
+        }
+    }
+
+    /// <summary>
+    /// 计算使图片适配绘制区域（保持宽高比）的缩放比例
+    /// </summary>
+    private float CalculateFitZoom(Image image, Rectangle drawArea)
+    {
+        if (image == null) return 1.0f;
+        float scaleX = (float)drawArea.Width / image.Width;
+        float scaleY = (float)drawArea.Height / image.Height;
+        return Math.Min(scaleX, scaleY);
+    }
+
+    /// <summary>
+    /// 计算使两张图片都能适配各自半区的统一缩放比例，取较小值
+    /// </summary>
+    private float CalculateFitZoomBoth(Image img1, Image img2, int halfWidth, int height)
+    {
+        var rect1 = new Rectangle(0, 0, halfWidth, height);
+        var rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
+        float zoom1 = CalculateFitZoom(img1, rect1);
+        float zoom2 = CalculateFitZoom(img2, rect2);
+        return Math.Min(zoom1, zoom2);
+    }
+
+    private void Form1_Resize(object? sender, EventArgs e)
+    {
+        this.Invalidate();
     }
 
     private void ToggleButton_Click(object sender, EventArgs e)
@@ -60,25 +119,28 @@ public partial class Form1 : Form
                 DrawKeyInstructions(e.Graphics);
             }
 
-            // 加载图片
-            using (Image img1 = Image.FromFile(_imagePaths[0]))
-            using (Image img2 = Image.FromFile(_imagePaths[1]))
+            // 使用缓存的图片
+            if (_image1 == null || _image2 == null)
             {
-                // 计算绘制区域
-                int halfWidth = this.ClientSize.Width / 2;
-                int height = this.ClientSize.Height;
-
-                // 绘制第一张图片
-                Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
-                DrawImage(e.Graphics, img1, rect1, _offset1, _zoomLevel, true);
-
-                // 绘制第二张图片
-                Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
-                DrawImage(e.Graphics, img2, rect2, _offset2, _zoomLevel, false);
-
-                // 绘制分隔线
-                e.Graphics.DrawLine(Pens.Black, halfWidth, 0, halfWidth, height);
+                e.Graphics.DrawString("图片加载失败", this.Font, Brushes.Red, 10, 10);
+                return;
             }
+
+            // 计算绘制区域
+            int halfWidth = this.ClientSize.Width / 2;
+            int height = this.ClientSize.Height;
+
+            // 绘制第一张图片
+            Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
+            DrawImage(e.Graphics, _image1, rect1, _offset1, _zoomLevel, true);
+
+            // 绘制第二张图片
+            Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
+            DrawImage(e.Graphics, _image2, rect2, _offset2, _zoomLevel, false);
+
+            // 绘制分隔线
+            using var pen = new Pen(Color.Black, 2);
+            e.Graphics.DrawLine(pen, halfWidth, 0, halfWidth, height);
         }
         catch (Exception ex)
         {
@@ -142,6 +204,9 @@ public partial class Form1 : Form
         float srcY = (visTop - imgY) / zoom;
         float srcW = visWidth / zoom;
         float srcH = visHeight / zoom;
+
+        // 使用高质量插值模式
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
 
         g.DrawImage(image,
             new RectangleF(visLeft, visTop, visWidth, visHeight),
@@ -236,12 +301,36 @@ public partial class Form1 : Form
         return (ModifierKeys & Keys.Alt) == Keys.Alt;
     }
 
+    /// <summary>
+    /// 首次显示时自动计算初始缩放，使两张图片都能完整显示
+    /// </summary>
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+
+        if (_image1 != null && _image2 != null)
+        {
+            int halfWidth = this.ClientSize.Width / 2;
+            int height = this.ClientSize.Height;
+
+            // 计算让两张图都能适配的统一缩放比例
+            _zoomLevel = CalculateFitZoomBoth(_image1, _image2, halfWidth, height);
+
+            // 重置偏移，使图片居中
+            _offset1 = new PointF(0, 0);
+            _offset2 = new PointF(0, 0);
+
+            this.Invalidate();
+        }
+    }
+
     private void Form1_MouseWheel(object sender, MouseEventArgs e)
     {
         if (ModifierKeys == Keys.Control)
         {
-            // Ctrl+滚轮：左右移动
-            int delta = e.Delta > 0 ? -10 : 10;
+            // Ctrl+滚轮：左右移动，步长随缩放级别调整
+            float step = Math.Max(10, this.ClientSize.Width * 0.05f * _zoomLevel);
+            float delta = e.Delta > 0 ? -step : step;
             _offset1.X += delta;
             _offset2.X += delta;
         }
@@ -252,6 +341,10 @@ public partial class Form1 : Form
             float oldZoom = _zoomLevel;
             float newZoom = _zoomLevel * zoomFactor;
 
+            // 限制缩放范围
+            if (newZoom < 0.01f || newZoom > 100f)
+                return;
+
             PointF mousePos = e.Location;
             int halfWidth = this.ClientSize.Width / 2;
             int height = this.ClientSize.Height;
@@ -259,12 +352,9 @@ public partial class Form1 : Form
             Rectangle rect1 = new Rectangle(0, 0, halfWidth, height);
             Rectangle rect2 = new Rectangle(halfWidth, 0, halfWidth, height);
 
-            // 加载图片尺寸
-            Size imgSize1, imgSize2;
-            using (Image img1 = Image.FromFile(_imagePaths[0]))
-                imgSize1 = img1.Size;
-            using (Image img2 = Image.FromFile(_imagePaths[1]))
-                imgSize2 = img2.Size;
+            // 使用缓存的图片尺寸，不再从磁盘读取
+            Size imgSize1 = _image1?.Size ?? Size.Empty;
+            Size imgSize2 = _image2?.Size ?? Size.Empty;
 
             if (mousePos.X < halfWidth)
             {
@@ -289,12 +379,15 @@ public partial class Form1 : Form
         }
         else
         {
-            // 单独滚轮：上下移动
-            int delta = e.Delta > 0 ? -10 : 10;
+            // 单独滚轮：上下移动，步长随缩放级别调整
+            float step = Math.Max(10, this.ClientSize.Height * 0.05f * _zoomLevel);
+            float delta = e.Delta > 0 ? -step : step;
             _offset1.Y += delta;
             _offset2.Y += delta;
         }
 
         this.Invalidate();
     }
+
+
 }
