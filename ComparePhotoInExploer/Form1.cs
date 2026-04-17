@@ -12,11 +12,13 @@ public partial class Form1 : Form
     private bool _isDragging = false;
     private Point _lastMousePos;
     private float _zoomLevel = 1.0f;
+    private int _shiftDragIndex = -1; // Shift拖动时选中的图片索引，-1表示未选中
 
     // 每张图独立的数据
     private Image?[] _images;
     private float[] _baseZooms;
     private PointF[] _offsets;
+    private PointF[] _manualOffsets; // Shift拖动产生的额外偏移量
 
     // 历史记录
     private HistoryBarData _historyBarData = new();
@@ -69,8 +71,12 @@ public partial class Form1 : Form
         _images = new Image?[Math.Max(1, _imageCount)];
         _baseZooms = new float[Math.Max(1, _imageCount)];
         _offsets = new PointF[Math.Max(1, _imageCount)];
+        _manualOffsets = new PointF[Math.Max(1, _imageCount)];
         for (int i = 0; i < _offsets.Length; i++)
+        {
             _offsets[i] = new PointF(0, 0);
+            _manualOffsets[i] = new PointF(0, 0);
+        }
 
         // 无边框 + 双缓冲
         this.FormBorderStyle = FormBorderStyle.None;
@@ -378,8 +384,12 @@ public partial class Form1 : Form
         _imagePaths = Array.Empty<string>();
         _imageCount = 0;
         _zoomLevel = 1.0f;
+        _shiftDragIndex = -1;
         for (int i = 0; i < _offsets.Length; i++)
+        {
             _offsets[i] = new PointF(0, 0);
+            _manualOffsets[i] = new PointF(0, 0);
+        }
         
         this.Text = "图片对比";
         this.Invalidate();
@@ -401,11 +411,16 @@ public partial class Form1 : Form
         _images = new Image?[_imageCount];
         _baseZooms = new float[_imageCount];
         _offsets = new PointF[_imageCount];
+        _manualOffsets = new PointF[_imageCount];
         for (int i = 0; i < _imageCount; i++)
+        {
             _offsets[i] = new PointF(0, 0);
+            _manualOffsets[i] = new PointF(0, 0);
+        }
 
         _zoomLevel = 1.0f;
         _showHelp = false;
+        _shiftDragIndex = -1;
 
         this.Text = $"图片对比 ({_imageCount}张)";
 
@@ -741,15 +756,13 @@ public partial class Form1 : Form
     private void DrawHelpPanel(Graphics g)
     {
         string[] instructions = {
-            "操作说明:",
+            "快捷键说明:",
             "- 鼠标左键拖动: 同步移动所有图片",
+            "- Shift+左键拖动: 只移动鼠标所在的那张图片",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片",
-            "- 拖入图片: 加载新的图片组进行对比",
-            "- 标题栏'历史记录': 点击展开/收起历史对比记录",
-            "- 标题栏'按键说明': 点击查看操作说明",
-            "- 标题栏主题按钮: 切换暗色/亮色/跟随系统"
+            "- 拖入图片: 加载新的图片组进行对比"
         };
 
         float boxWidth = 380f;
@@ -929,6 +942,16 @@ public partial class Form1 : Form
         {
             _isDragging = true;
             _lastMousePos = e.Location;
+
+            // Shift+左键：只拖动鼠标所在的那张图片
+            if ((ModifierKeys & Keys.Shift) == Keys.Shift)
+            {
+                _shiftDragIndex = HitTest(e.Location);
+            }
+            else
+            {
+                _shiftDragIndex = -1;
+            }
         }
     }
 
@@ -977,9 +1000,20 @@ public partial class Form1 : Form
             int deltaX = e.X - _lastMousePos.X;
             int deltaY = e.Y - _lastMousePos.Y;
 
-            for (int i = 0; i < _imageCount; i++)
+            if (_shiftDragIndex >= 0 && _shiftDragIndex < _imageCount)
             {
+                // Shift拖动：只移动选中的图片
+                int i = _shiftDragIndex;
                 _offsets[i] = new PointF(_offsets[i].X + deltaX, _offsets[i].Y + deltaY);
+                _manualOffsets[i] = new PointF(_manualOffsets[i].X + deltaX, _manualOffsets[i].Y + deltaY);
+            }
+            else
+            {
+                // 普通拖动：同步移动所有图片
+                for (int i = 0; i < _imageCount; i++)
+                {
+                    _offsets[i] = new PointF(_offsets[i].X + deltaX, _offsets[i].Y + deltaY);
+                }
             }
 
             _lastMousePos = e.Location;
@@ -990,6 +1024,7 @@ public partial class Form1 : Form
     private void Form1_MouseUp(object? sender, MouseEventArgs e)
     {
         _isDragging = false;
+        _shiftDragIndex = -1;
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -1114,8 +1149,15 @@ public partial class Form1 : Form
             float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
             float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
 
-            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
-            _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
+            // active图片：从offset中剥离manualOffset，计算同步偏移部分，再加回manualOffset
+            PointF activeSyncOffset = new PointF(
+                _offsets[activeIdx].X - _manualOffsets[activeIdx].X,
+                _offsets[activeIdx].Y - _manualOffsets[activeIdx].Y);
+            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, activeSyncOffset, activeImgSize);
+            var activeNewSync = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, activeSyncOffset, activeImgSize);
+            _offsets[activeIdx] = new PointF(
+                activeNewSync.X + _manualOffsets[activeIdx].X,
+                activeNewSync.Y + _manualOffsets[activeIdx].Y);
 
             float activeLocalX = mousePos.X - activeRect.Left;
             float activeLocalY = mousePos.Y - activeRect.Top;
@@ -1129,7 +1171,8 @@ public partial class Form1 : Form
                 float newEffPassive = _baseZooms[i] * newZoomLevel;
 
                 PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
-                _offsets[i] = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
+                var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
+                _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
             }
 
             _zoomLevel = newZoomLevel;
