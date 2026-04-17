@@ -19,8 +19,9 @@ public partial class Form1 : Form
     private PointF[] _offsets;
 
     // 历史记录
-    private HistoryBar _historyBar = null!;
+    private HistoryBarData _historyBarData = new();
     private List<HistoryGroup> _historyGroups = new();
+    private int _hoverHistoryGroup = -1; // 悬停的历史组索引
 
     // 自绘标题栏
     private const int TitleBarH = 32;
@@ -61,10 +62,8 @@ public partial class Form1 : Form
         this.StartPosition = FormStartPosition.CenterScreen;
         this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
 
-        // 创建历史记录条
-        _historyBar = new HistoryBar();
-        _historyBar.HistoryGroupClicked += OnHistoryGroupClicked;
-        _historyBar.HistoryGroupDeleteRequested += OnHistoryGroupDeleteRequested;
+        // 创建历史记录数据
+        _historyBarData = new HistoryBarData();
 
         // 注册事件
         this.MouseDown += Form1_MouseDown;
@@ -74,18 +73,12 @@ public partial class Form1 : Form
         this.Paint += Form1_Paint;
         this.KeyDown += Form1_KeyDown;
 
-        // 先加载图片到内存缓存（在添加控件前）
+        // 加载图片到内存缓存
         LoadImages();
-
-        // 添加历史记录条（手动定位在标题栏下方，避免遮挡标题栏）
-        _historyBar.Location = new Point(0, TitleBarH);
-        _historyBar.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
-        this.Controls.Add(_historyBar);
-        UpdateHistoryBarSize();
 
         // 加载历史记录
         _historyGroups = HistoryData.Load();
-        _historyBar.LoadGroups(_historyGroups);
+        _historyBarData.LoadGroups(_historyGroups);
 
         // 保存当前组到历史记录（异步处理缩略图生成，避免阻塞UI）
         SaveCurrentToHistory();
@@ -104,7 +97,7 @@ public partial class Form1 : Form
         HistoryData.Save(_historyGroups);
 
         // 先用占位图加载 UI
-        _historyBar.LoadGroups(_historyGroups);
+        _historyBarData.LoadGroups(_historyGroups);
 
         // 异步生成缩略图，不阻塞UI — 只生成尚不存在的缩略图
         var pathsToGenerate = new List<(string path, string hash)>();
@@ -133,7 +126,7 @@ public partial class Form1 : Form
                 // 在UI线程刷新缩略图
                 this.BeginInvoke(new Action(() =>
                 {
-                    _historyBar.LoadGroups(_historyGroups);
+                    _historyBarData.LoadGroups(_historyGroups);
                 }));
             }
             catch
@@ -174,7 +167,7 @@ public partial class Form1 : Form
             _historyGroups.RemoveAt(idx);
             _historyGroups.Insert(0, group);
             HistoryData.Save(_historyGroups);
-            _historyBar.LoadGroups(_historyGroups);
+            _historyBarData.LoadGroups(_historyGroups);
         }
     }
 
@@ -195,7 +188,7 @@ public partial class Form1 : Form
         HistoryData.DeleteGroupThumbnails(_historyGroups, removed.Id);
         _historyGroups.RemoveAt(groupIndex);
         HistoryData.Save(_historyGroups);
-        _historyBar.LoadGroups(_historyGroups);
+        _historyBarData.LoadGroups(_historyGroups);
         
         // 如果删除的是当前对比组，清空显示
         if (isCurrentGroup)
@@ -303,11 +296,11 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 获取第 i 张图的绘制区域（扣除标题栏 + 历史栏高度）
+    /// 获取第 i 张图的绘制区域（仅扣除标题栏）
     /// </summary>
     private Rectangle GetCellRect(int index)
     {
-        int topOffset = TitleBarH + _historyBar.Height;
+        int topOffset = TitleBarH;
         int availW = Math.Max(1, this.ClientSize.Width);
         int availH = Math.Max(1, this.ClientSize.Height - topOffset);
         int cellW = Math.Max(1, availW / _cols);
@@ -346,12 +339,12 @@ public partial class Form1 : Form
         {
             _showHelp = !_showHelp;
             if (_showHelp)
-                _historyBar.Collapse();
+                _historyBarData.Collapse();
             this.Invalidate();
         }
     }
 
-    private void Form1_Paint(object sender, PaintEventArgs e)
+    private void Form1_Paint(object? sender, PaintEventArgs e)
     {
         if (_imagePaths == null || _imagePaths.Length == 0)
             return;
@@ -359,7 +352,7 @@ public partial class Form1 : Form
         try
         {
             // 历史记录和按键说明互斥
-            if (!_historyBar.IsCollapsed)
+            if (!_historyBarData.IsCollapsed)
                 _showHelp = false;
 
             EnsureCheckerBrush();
@@ -367,6 +360,7 @@ public partial class Form1 : Form
             // 绘制自绘标题栏
             DrawTitleBar(e.Graphics);
 
+            // 图片区域（不因历史记录展开而偏移）
             for (int i = 0; i < _imageCount; i++)
             {
                 var rect = GetCellRect(i);
@@ -383,7 +377,7 @@ public partial class Form1 : Form
 
             // 绘制网格分割线
             using var pen = new Pen(Color.Black, 2);
-            int topOffset = TitleBarH + _historyBar.Height;
+            int topOffset = TitleBarH;
             int availH = this.ClientSize.Height - topOffset;
             int cellW = this.ClientSize.Width / _cols;
             int cellH = availH / _rows;
@@ -391,6 +385,12 @@ public partial class Form1 : Form
                 e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
             for (int r = 1; r < _rows; r++)
                 e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
+
+            // 历史记录覆盖层（浮在图片区域上方）
+            if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
+            {
+                _historyBarData.Draw(e.Graphics, 0, TitleBarH, this.ClientSize.Width, _hoverHistoryGroup);
+            }
 
             // 按键说明（由标题栏按钮触发，与历史记录互斥）
             if (_showHelp)
@@ -400,12 +400,12 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, TitleBarH + _historyBar.Height + 10);
+            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, TitleBarH + 10);
         }
     }
 
     /// <summary>
-    /// 自绘标题栏 — 左侧"历史记录"按钮，中间"按键说明"按钮，右侧最小化/最大化/关闭
+    /// 自绘标题栏 — 左侧"历史记录"+"操作说明"按钮，右侧最小化/最大化/关闭
     /// </summary>
     private void DrawTitleBar(Graphics g)
     {
@@ -415,32 +415,36 @@ public partial class Form1 : Form
         using var bgBrush = new SolidBrush(Color.FromArgb(32, 32, 32));
         g.FillRectangle(bgBrush, 0, 0, w, TitleBarH);
 
-        // 标题文字
-        using var titleFont = new Font("Segoe UI", 9F);
-        using var titleTextBrush = new SolidBrush(Color.FromArgb(220, 220, 220));
-        string titleText = this.Text;
-        g.DrawString(titleText, titleFont, titleTextBrush, 12, 8);
+        // 按钮起始位置
+        int btnX = 8;
 
         // 历史记录按钮
-        _btnHistory = new Rectangle(120, 0, 70, TitleBarH);
-        bool historyActive = !_historyBar.IsCollapsed;
+        _btnHistory = new Rectangle(btnX, 0, 72, TitleBarH);
+        bool historyActive = !_historyBarData.IsCollapsed;
         Color historyBg = historyActive ? Color.FromArgb(62, 62, 62) :
                           _hoverHistory ? Color.FromArgb(50, 50, 50) : Color.Transparent;
         using (var historyBgBrush = new SolidBrush(historyBg))
             g.FillRectangle(historyBgBrush, _btnHistory);
-        using var historyFont = new Font("Segoe UI", 9F);
+        using var historyFont = new Font("Microsoft YaHei UI", 9F);
         using var historyFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
-        g.DrawString("历史记录", historyFont, historyFgBrush, 125, 8);
+        var historySize = g.MeasureString("历史记录", historyFont);
+        g.DrawString("历史记录", historyFont, historyFgBrush,
+            _btnHistory.Left + (_btnHistory.Width - historySize.Width) / 2,
+            _btnHistory.Top + (_btnHistory.Height - historySize.Height) / 2);
 
-        // 按键说明按钮
-        _btnHelp = new Rectangle(195, 0, 70, TitleBarH);
+        // 操作说明按钮
+        btnX += 72 + 2;
+        _btnHelp = new Rectangle(btnX, 0, 72, TitleBarH);
         Color helpBg = _showHelp ? Color.FromArgb(62, 62, 62) :
                        _hoverHelp ? Color.FromArgb(50, 50, 50) : Color.Transparent;
         using (var helpBgBrush = new SolidBrush(helpBg))
             g.FillRectangle(helpBgBrush, _btnHelp);
-        using var helpFont = new Font("Segoe UI", 9F);
+        using var helpFont = new Font("Microsoft YaHei UI", 9F);
         using var helpFgBrush = new SolidBrush(Color.FromArgb(200, 200, 200));
-        g.DrawString("按键说明", helpFont, helpFgBrush, 200, 8);
+        var helpSize = g.MeasureString("操作说明", helpFont);
+        g.DrawString("操作说明", helpFont, helpFgBrush,
+            _btnHelp.Left + (_btnHelp.Width - helpSize.Width) / 2,
+            _btnHelp.Top + (_btnHelp.Height - helpSize.Height) / 2);
 
         // 窗口控制按钮区域
         int btnW = 46;
@@ -503,7 +507,7 @@ public partial class Form1 : Form
 
         float boxWidth = 380f;
         float boxHeight = instructions.Length * 22 + 20;
-        int topOffset = TitleBarH + _historyBar.Height;
+        int topOffset = TitleBarH;
         using (var bgBrush = new SolidBrush(Color.FromArgb(230, 32, 32, 32)))
         {
             g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
@@ -577,7 +581,7 @@ public partial class Form1 : Form
         g.ResetClip();
     }
 
-    private void Form1_MouseDown(object sender, MouseEventArgs e)
+    private void Form1_MouseDown(object? sender, MouseEventArgs e)
     {
         // 标题栏区域处理
         if (e.Location.Y < TitleBarH)
@@ -602,7 +606,7 @@ public partial class Form1 : Form
             {
                 _showHelp = !_showHelp;
                 if (_showHelp)
-                    _historyBar.Collapse(); // 关闭历史记录
+                    _historyBarData.Collapse(); // 关闭历史记录
                 this.Invalidate();
                 return;
             }
@@ -610,7 +614,7 @@ public partial class Form1 : Form
             if (_btnHistory.Contains(e.Location))
             {
                 _showHelp = false; // 关闭按键说明
-                _historyBar.ToggleCollapse();
+                _historyBarData.ToggleCollapse();
                 this.Invalidate();
                 return;
             }
@@ -620,11 +624,42 @@ public partial class Form1 : Form
             return;
         }
 
-        // 历史栏区域
-        if (e.Location.Y < TitleBarH + _historyBar.Height)
+        // 历史记录覆盖层区域 — 处理点击
+        if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
         {
-            // 由 HistoryBar 自行处理
-            return;
+            int hitIdx = _historyBarData.HitTest(0, TitleBarH, this.ClientSize.Width, e.Location, 0);
+            if (hitIdx >= 0)
+            {
+                if (e.Button == MouseButtons.Left)
+                {
+                    var paths = _historyBarData.GetGroupPaths(hitIdx);
+                    if (paths != null)
+                        OnHistoryGroupClicked(paths);
+                }
+                else if (e.Button == MouseButtons.Right)
+                {
+                    var group = _historyBarData.GetGroup(hitIdx);
+                    if (group != null)
+                    {
+                        string imgNames = string.Join("\n", group.ImagePaths.Take(3).Select(p => Path.GetFileName(p)));
+                        if (group.ImagePaths.Count > 3)
+                            imgNames += $"\n...等{group.ImagePaths.Count}张";
+
+                        var result = MessageBox.Show(
+                            $"确定删除此历史记录组？\n\n{imgNames}",
+                            "删除历史记录",
+                            MessageBoxButtons.YesNo,
+                            MessageBoxIcon.Question,
+                            MessageBoxDefaultButton.Button2);
+
+                        if (result == DialogResult.Yes)
+                        {
+                            OnHistoryGroupDeleteRequested(hitIdx);
+                        }
+                    }
+                }
+                return;
+            }
         }
 
         // 图片区域拖动
@@ -635,7 +670,7 @@ public partial class Form1 : Form
         }
     }
 
-    private void Form1_MouseMove(object sender, MouseEventArgs e)
+    private void Form1_MouseMove(object? sender, MouseEventArgs e)
     {
         // 标题栏悬停效果
         if (e.Location.Y < TitleBarH)
@@ -656,6 +691,20 @@ public partial class Form1 : Form
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
             }
             return;
+        }
+
+        // 历史记录覆盖层悬停检测
+        if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
+        {
+            int newHover = _historyBarData.HitTest(0, TitleBarH, this.ClientSize.Width, e.Location, 0);
+            if (newHover != _hoverHistoryGroup)
+            {
+                _hoverHistoryGroup = newHover;
+                this.Cursor = newHover >= 0 ? Cursors.Hand : Cursors.Default;
+                this.Invalidate();
+            }
+            if (newHover >= 0)
+                return; // 在历史记录上，不拖动图片
         }
 
         if (_isDragging)
@@ -744,19 +793,8 @@ public partial class Form1 : Form
     {
         base.OnResize(e);
         _isWindowMaximized = this.WindowState == FormWindowState.Maximized;
-        UpdateHistoryBarSize();
         UpdateBaseZoom();
         this.Invalidate();
-    }
-
-    /// <summary>
-    /// 更新历史记录条的位置和宽度
-    /// </summary>
-    private void UpdateHistoryBarSize()
-    {
-        if (_historyBar == null) return;
-        _historyBar.Location = new Point(0, TitleBarH);
-        _historyBar.Width = this.ClientSize.Width;
     }
 
     protected override void OnShown(EventArgs e)
@@ -770,7 +808,7 @@ public partial class Form1 : Form
         this.Invalidate();
     }
 
-    private void Form1_MouseWheel(object sender, MouseEventArgs e)
+    private void Form1_MouseWheel(object? sender, MouseEventArgs e)
     {
         if (ModifierKeys == Keys.Control)
         {
