@@ -210,7 +210,10 @@ public partial class Form1 : Form
         float srcW = visWidth / zoom;
         float srcH = visHeight / zoom;
 
-        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+        // 缩小较多时使用低质量插值以提升性能，避免小图拖动卡顿
+        g.InterpolationMode = zoom < 0.5f
+            ? System.Drawing.Drawing2D.InterpolationMode.Bilinear
+            : System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
 
         g.DrawImage(image,
             new RectangleF(visLeft, visTop, visWidth, visHeight),
@@ -317,9 +320,9 @@ public partial class Form1 : Form
     {
         if (ModifierKeys == Keys.Control)
         {
-            // Ctrl+滚轮：左右移动，步长随缩放级别调整
+            // Ctrl+滚轮：左右移动，步长按当前显示大小的比例计算
             float avgZoom = (_baseZoom1 + _baseZoom2) / 2f * _zoomLevel;
-            float step = Math.Max(10, this.ClientSize.Width * 0.05f * avgZoom);
+            float step = this.ClientSize.Width * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
             _offset1.X += delta;
             _offset2.X += delta;
@@ -366,9 +369,9 @@ public partial class Form1 : Form
         }
         else
         {
-            // 单独滚轮：上下移动
+            // 单独滚轮：上下移动，步长按当前显示大小的比例计算
             float avgZoom = (_baseZoom1 + _baseZoom2) / 2f * _zoomLevel;
-            float step = Math.Max(10, this.ClientSize.Height * 0.05f * avgZoom);
+            float step = this.ClientSize.Height * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
             _offset1.Y += delta;
             _offset2.Y += delta;
