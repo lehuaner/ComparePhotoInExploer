@@ -1,6 +1,6 @@
 ﻿namespace ComparePhotoInExploer;
 
-partial class Form1
+public partial class Form1
 {
     /// <summary>
     ///  Required designer variable.
@@ -20,6 +20,7 @@ partial class Form1
                 foreach (var img in _images)
                     img?.Dispose();
             }
+            _historyBar?.Dispose();
             if (components != null)
             {
                 components.Dispose();

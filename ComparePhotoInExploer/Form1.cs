@@ -1,31 +1,49 @@
+using System.Runtime.InteropServices;
+
 namespace ComparePhotoInExploer;
 
 public partial class Form1 : Form
 {
-    private readonly string[] _imagePaths;
-    private readonly int _imageCount;
-    private readonly int _cols;
-    private readonly int _rows;
+    private string[] _imagePaths;
+    private int _imageCount;
+    private int _cols;
+    private int _rows;
 
     private bool _isDragging = false;
     private Point _lastMousePos;
     private float _zoomLevel = 1.0f;
     private bool _showInstructions = false;
-    private Button _toggleButton;
 
     // 每张图独立的数据
-    private readonly Image?[] _images;
-    private readonly float[] _baseZooms;
-    private readonly PointF[] _offsets;
+    private Image?[] _images;
+    private float[] _baseZooms;
+    private PointF[] _offsets;
+
+    // 历史记录
+    private HistoryBar _historyBar = null!;
+    private List<HistoryGroup> _historyGroups = new();
+
+    // 自绘标题栏
+    private const int TitleBarH = 32;
+    private Rectangle _btnMin, _btnMax, _btnClose;
+    private bool _hoverMin, _hoverMax, _hoverClose;
+    private bool _isWindowMaximized = false;
+
+    // Win32 拖拽移动
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+    [DllImport("user32.dll")]
+    private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
+    private const int WM_NCLBUTTONDOWN = 0xA1;
+    private const int HTCAPTION = 2;
 
     public Form1(string[] imagePaths)
     {
         InitializeComponent();
+
         _imagePaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
         _imageCount = Math.Clamp(_imagePaths.Length, 1, 9);
         this.Text = $"图片对比 ({_imageCount}张)";
-        this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
-        this.DoubleBuffered = true;
 
         // 计算网格尺寸
         (_cols, _rows) = GetGridLayout(_imageCount);
@@ -37,18 +55,16 @@ public partial class Form1 : Form
         for (int i = 0; i < _imageCount; i++)
             _offsets[i] = new PointF(0, 0);
 
-        // 创建切换按钮
-        _toggleButton = new Button();
-        _toggleButton.Text = "▶";
-        _toggleButton.Size = new Size(30, 30);
-        _toggleButton.Location = new Point(10, 10);
-        _toggleButton.FlatStyle = FlatStyle.Flat;
-        _toggleButton.FlatAppearance.BorderSize = 0;
-        _toggleButton.FlatAppearance.MouseOverBackColor = Color.Transparent;
-        _toggleButton.FlatAppearance.MouseDownBackColor = Color.Transparent;
-        _toggleButton.BackColor = Color.Transparent;
-        _toggleButton.Click += ToggleButton_Click;
-        this.Controls.Add(_toggleButton);
+        // 无边框 + 双缓冲
+        this.FormBorderStyle = FormBorderStyle.None;
+        this.DoubleBuffered = true;
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
+
+        // 创建历史记录条
+        _historyBar = new HistoryBar();
+        _historyBar.HistoryGroupClicked += OnHistoryGroupClicked;
+        _historyBar.HistoryGroupDeleteRequested += OnHistoryGroupDeleteRequested;
 
         // 注册事件
         this.MouseDown += Form1_MouseDown;
@@ -56,15 +72,154 @@ public partial class Form1 : Form
         this.MouseUp += Form1_MouseUp;
         this.MouseWheel += Form1_MouseWheel;
         this.Paint += Form1_Paint;
-        this.Resize += Form1_Resize;
+        this.KeyDown += Form1_KeyDown;
 
-        // 加载图片到内存缓存
+        // 先加载图片到内存缓存（在添加控件前）
         LoadImages();
+
+        // 添加历史记录条到控件（后添加避免布局问题）
+        _historyBar.Dock = DockStyle.Top;
+        this.Controls.Add(_historyBar);
+
+        // 加载历史记录
+        _historyGroups = HistoryData.Load();
+        _historyBar.LoadGroups(_historyGroups);
+
+        // 保存当前组到历史记录（异步处理缩略图生成，避免阻塞UI）
+        SaveCurrentToHistory();
+    }
+
+    /// <summary>
+    /// 将当前打开的图片组保存到历史记录
+    /// </summary>
+    private void SaveCurrentToHistory()
+    {
+        if (_imagePaths == null || _imagePaths.Length == 0)
+            return;
+
+        // 更新历史数据（处理去重、排序、上限）
+        _historyGroups = HistoryData.AddOrUpdateGroup(_historyGroups, _imagePaths);
+        HistoryData.Save(_historyGroups);
+
+        // 先用占位图加载 UI
+        _historyBar.LoadGroups(_historyGroups);
+
+        // 异步生成缩略图，不阻塞UI — 只生成尚不存在的缩略图
+        var pathsToGenerate = new List<(string path, string hash)>();
+        foreach (var p in _imagePaths)
+        {
+            var hash = HistoryData.GetPathHash(p);
+            if (!HistoryData.ThumbnailExists(hash))
+                pathsToGenerate.Add((p, hash));
+        }
+
+        if (pathsToGenerate.Count == 0)
+            return; // 所有缩略图已存在，无需生成
+
+        var capturePaths = pathsToGenerate.ToArray();
+
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                foreach (var (path, hash) in capturePaths)
+                {
+                    using var thumb = ImageProcessor.CreateThumbnail(path);
+                    HistoryData.SaveThumbnail(hash, thumb);
+                }
+
+                // 在UI线程刷新缩略图
+                this.BeginInvoke(new Action(() =>
+                {
+                    _historyBar.LoadGroups(_historyGroups);
+                }));
+            }
+            catch
+            {
+                // 忽略生成失败
+            }
+        });
+    }
+
+    /// <summary>
+    /// 历史记录组被点击 - 加载该组图片
+    /// </summary>
+    private void OnHistoryGroupClicked(string[] paths)
+    {
+        if (paths == null || paths.Length == 0) return;
+
+        // 检查是否与当前图片相同
+        if (_imagePaths.SequenceEqual(paths))
+            return;
+
+        // 切换到该组图片
+        LoadNewGroup(paths);
+
+        // 将该组提到最前
+        int idx = -1;
+        for (int i = 0; i < _historyGroups.Count; i++)
+        {
+            if (_historyGroups[i].ImagePaths.SequenceEqual(paths))
+            {
+                idx = i;
+                break;
+            }
+        }
+
+        if (idx > 0)
+        {
+            var group = _historyGroups[idx];
+            _historyGroups.RemoveAt(idx);
+            _historyGroups.Insert(0, group);
+            HistoryData.Save(_historyGroups);
+            _historyBar.LoadGroups(_historyGroups);
+        }
+    }
+
+    /// <summary>
+    /// 历史记录组被请求删除
+    /// </summary>
+    private void OnHistoryGroupDeleteRequested(int groupIndex)
+    {
+        if (groupIndex < 0 || groupIndex >= _historyGroups.Count) return;
+
+        var removed = _historyGroups[groupIndex];
+        HistoryData.DeleteGroupThumbnails(_historyGroups, removed.Id);
+        _historyGroups.RemoveAt(groupIndex);
+        HistoryData.Save(_historyGroups);
+        _historyBar.LoadGroups(_historyGroups);
+    }
+
+    /// <summary>
+    /// 加载新的图片组
+    /// </summary>
+    private void LoadNewGroup(string[] paths)
+    {
+        for (int i = 0; i < _images.Length; i++)
+            _images[i]?.Dispose();
+
+        _imagePaths = paths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+        _imageCount = Math.Clamp(_imagePaths.Length, 1, 9);
+        (_cols, _rows) = GetGridLayout(_imageCount);
+
+        _images = new Image?[_imageCount];
+        _baseZooms = new float[_imageCount];
+        _offsets = new PointF[_imageCount];
+        for (int i = 0; i < _imageCount; i++)
+            _offsets[i] = new PointF(0, 0);
+
+        _zoomLevel = 1.0f;
+        _showInstructions = false;
+
+        this.Text = $"图片对比 ({_imageCount}张)";
+
+        LoadImages();
+        UpdateBaseZoom();
+        this.Invalidate();
     }
 
     /// <summary>
     /// 根据图片数量计算网格布局 (cols, rows)
-    /// 2→1×2, 3→2×2, 4→2×2, 5→2×3, 6→2×3, 7→3×3, 8→3×3, 9→3×3
     /// </summary>
     private static (int cols, int rows) GetGridLayout(int count)
     {
@@ -105,9 +260,6 @@ public partial class Form1 : Form
         }
     }
 
-    /// <summary>
-    /// 计算使图片适配绘制区域（保持宽高比）的缩放比例
-    /// </summary>
     private static float CalculateFitZoom(Image image, Rectangle drawArea)
     {
         if (image == null) return 1.0f;
@@ -117,20 +269,20 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 获取第 i 张图的绘制区域
+    /// 获取第 i 张图的绘制区域（扣除标题栏 + 历史栏高度）
     /// </summary>
     private Rectangle GetCellRect(int index)
     {
-        int cellW = this.ClientSize.Width / _cols;
-        int cellH = this.ClientSize.Height / _rows;
+        int topOffset = TitleBarH + _historyBar.Height;
+        int availW = Math.Max(1, this.ClientSize.Width);
+        int availH = Math.Max(1, this.ClientSize.Height - topOffset);
+        int cellW = Math.Max(1, availW / _cols);
+        int cellH = Math.Max(1, availH / _rows);
         int col = index % _cols;
         int row = index / _cols;
-        return new Rectangle(col * cellW, row * cellH, cellW, cellH);
+        return new Rectangle(col * cellW, topOffset + row * cellH, cellW, cellH);
     }
 
-    /// <summary>
-    /// 根据屏幕坐标确定鼠标所在的图片索引，-1 表示不在任何图片上
-    /// </summary>
     private int HitTest(PointF screenPos)
     {
         for (int i = 0; i < _imageCount; i++)
@@ -142,9 +294,6 @@ public partial class Form1 : Form
         return -1;
     }
 
-    /// <summary>
-    /// 更新每张图的基础缩放比例，使其各自 fit-to-window
-    /// </summary>
     private void UpdateBaseZoom()
     {
         for (int i = 0; i < _imageCount; i++)
@@ -155,22 +304,15 @@ public partial class Form1 : Form
         }
     }
 
-    /// <summary>
-    /// 获取图片的实际缩放 = 基础缩放 × 公共倍率
-    /// </summary>
     private float GetEffectiveZoom(int index) => _baseZooms[index] * _zoomLevel;
 
-    private void Form1_Resize(object? sender, EventArgs e)
+    private void Form1_KeyDown(object? sender, KeyEventArgs e)
     {
-        UpdateBaseZoom();
-        this.Invalidate();
-    }
-
-    private void ToggleButton_Click(object sender, EventArgs e)
-    {
-        _showInstructions = !_showInstructions;
-        _toggleButton.Text = _showInstructions ? "▼" : "▶";
-        this.Invalidate();
+        if (e.KeyCode == Keys.H)
+        {
+            _showInstructions = !_showInstructions;
+            this.Invalidate();
+        }
     }
 
     private void Form1_Paint(object sender, PaintEventArgs e)
@@ -181,6 +323,9 @@ public partial class Form1 : Form
         try
         {
             EnsureCheckerBrush();
+
+            // 绘制自绘标题栏
+            DrawTitleBar(e.Graphics);
 
             for (int i = 0; i < _imageCount; i++)
             {
@@ -198,14 +343,16 @@ public partial class Form1 : Form
 
             // 绘制网格分割线
             using var pen = new Pen(Color.Black, 2);
+            int topOffset = TitleBarH + _historyBar.Height;
+            int availH = this.ClientSize.Height - topOffset;
             int cellW = this.ClientSize.Width / _cols;
-            int cellH = this.ClientSize.Height / _rows;
+            int cellH = availH / _rows;
             for (int c = 1; c < _cols; c++)
-                e.Graphics.DrawLine(pen, c * cellW, 0, c * cellW, this.ClientSize.Height);
+                e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
             for (int r = 1; r < _rows; r++)
-                e.Graphics.DrawLine(pen, 0, r * cellH, this.ClientSize.Width, r * cellH);
+                e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
 
-            // 按键提示在最上层绘制
+            // 按键提示
             if (_showInstructions)
             {
                 DrawKeyInstructions(e.Graphics);
@@ -213,8 +360,72 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, 10);
+            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, TitleBarH + _historyBar.Height + 10);
         }
+    }
+
+    /// <summary>
+    /// 自绘标题栏 — 左侧显示"历史记录"按钮，右侧显示最小化/最大化/关闭
+    /// </summary>
+    private void DrawTitleBar(Graphics g)
+    {
+        int w = this.ClientSize.Width;
+
+        // 标题栏背景
+        using var bgBrush = new SolidBrush(Color.FromArgb(32, 32, 32));
+        g.FillRectangle(bgBrush, 0, 0, w, TitleBarH);
+
+        // 标题文字
+        using var titleFont = new Font("Segoe UI", 9F);
+        using var titleTextBrush = new SolidBrush(Color.FromArgb(220, 220, 220));
+        string titleText = this.Text;
+        g.DrawString(titleText, titleFont, titleTextBrush, 12, 8);
+
+        // 窗口控制按钮区域
+        int btnW = 46;
+        int btnH = TitleBarH;
+        int x = w - btnW * 3;
+
+        _btnMin = new Rectangle(x, 0, btnW, btnH);
+        _btnMax = new Rectangle(x + btnW, 0, btnW, btnH);
+        _btnClose = new Rectangle(x + btnW * 2, 0, btnW, btnH);
+
+        // 最小化按钮
+        DrawControlButton(g, _btnMin, "─", _hoverMin, false);
+        // 最大化按钮
+        DrawControlButton(g, _btnMax, _isWindowMaximized ? "❐" : "□", _hoverMax, false);
+        // 关闭按钮
+        DrawControlButton(g, _btnClose, "✕", _hoverClose, true);
+    }
+
+    private void DrawControlButton(Graphics g, Rectangle rect, string text, bool hover, bool isClose)
+    {
+        Color bg, fg;
+        if (isClose && hover)
+        {
+            bg = Color.FromArgb(232, 17, 35);
+            fg = Color.White;
+        }
+        else if (hover)
+        {
+            bg = Color.FromArgb(62, 62, 62);
+            fg = Color.White;
+        }
+        else
+        {
+            bg = Color.Transparent;
+            fg = Color.FromArgb(200, 200, 200);
+        }
+
+        using var bgBrush = new SolidBrush(bg);
+        g.FillRectangle(bgBrush, rect);
+
+        using var fgBrush = new SolidBrush(fg);
+        using var font = new Font("Segoe UI", 9F);
+        var size = g.MeasureString(text, font);
+        g.DrawString(text, font, fgBrush,
+            rect.Left + (rect.Width - size.Width) / 2,
+            rect.Top + (rect.Height - size.Height) / 2);
     }
 
     private void DrawKeyInstructions(Graphics g)
@@ -224,19 +435,21 @@ public partial class Form1 : Form
             "- 鼠标左键拖动: 同步移动所有图片",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
-            "- Alt+滚轮: 以鼠标指针为中心缩放图片"
+            "- Alt+滚轮: 以鼠标指针为中心缩放图片",
+            "- H键: 显示/隐藏按键提示"
         };
 
-        float boxWidth = 320f;
+        float boxWidth = 340f;
         float boxHeight = instructions.Length * 20 + 10;
+        int topOffset = TitleBarH + _historyBar.Height;
         using (var bgBrush = new SolidBrush(Color.FromArgb(200, 255, 255, 255)))
         {
-            g.FillRectangle(bgBrush, 5, 35, boxWidth, boxHeight);
+            g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
         }
 
         for (int i = 0; i < instructions.Length; i++)
         {
-            g.DrawString(instructions[i], this.Font, Brushes.Black, 10, 40 + i * 20);
+            g.DrawString(instructions[i], this.Font, Brushes.Black, 10, topOffset + 10 + i * 20);
         }
     }
 
@@ -284,7 +497,6 @@ public partial class Form1 : Form
         float srcW = visWidth / zoom;
         float srcH = visHeight / zoom;
 
-        // 缩小较多时使用低质量插值以提升性能，避免小图拖动卡顿
         g.InterpolationMode = zoom < 0.5f
             ? System.Drawing.Drawing2D.InterpolationMode.Bilinear
             : System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
@@ -299,6 +511,44 @@ public partial class Form1 : Form
 
     private void Form1_MouseDown(object sender, MouseEventArgs e)
     {
+        // 标题栏区域处理
+        if (e.Location.Y < TitleBarH)
+        {
+            if (_btnClose.Contains(e.Location))
+            {
+                this.Close();
+                return;
+            }
+            if (_btnMax.Contains(e.Location))
+            {
+                ToggleMaximize();
+                return;
+            }
+            if (_btnMin.Contains(e.Location))
+            {
+                this.WindowState = FormWindowState.Minimized;
+                return;
+            }
+            // 历史记录折叠按钮区域 — 点击标题栏左侧
+            if (e.Location.X < 100)
+            {
+                _historyBar.ToggleCollapse();
+                return;
+            }
+            // 拖动窗口
+            ReleaseCapture();
+            SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            return;
+        }
+
+        // 历史栏区域
+        if (e.Location.Y < TitleBarH + _historyBar.Height)
+        {
+            // 由 HistoryBar 自行处理
+            return;
+        }
+
+        // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
             _isDragging = true;
@@ -308,6 +558,23 @@ public partial class Form1 : Form
 
     private void Form1_MouseMove(object sender, MouseEventArgs e)
     {
+        // 标题栏悬停效果
+        if (e.Location.Y < TitleBarH)
+        {
+            bool newHoverMin = _btnMin.Contains(e.Location);
+            bool newHoverMax = _btnMax.Contains(e.Location);
+            bool newHoverClose = _btnClose.Contains(e.Location);
+
+            if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose)
+            {
+                _hoverMin = newHoverMin;
+                _hoverMax = newHoverMax;
+                _hoverClose = newHoverClose;
+                this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
+            }
+            return;
+        }
+
         if (_isDragging)
         {
             int deltaX = e.X - _lastMousePos.X;
@@ -323,7 +590,7 @@ public partial class Form1 : Form
         }
     }
 
-    private void Form1_MouseUp(object sender, MouseEventArgs e)
+    private void Form1_MouseUp(object? sender, MouseEventArgs e)
     {
         _isDragging = false;
     }
@@ -335,9 +602,6 @@ public partial class Form1 : Form
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
-    /// <summary>
-    /// 从屏幕坐标反算指针指向图片的归一化坐标（0~1 比例位置）
-    /// </summary>
     private static PointF ScreenToNormalized(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
     {
         float scaledWidth = imageSize.Width * zoom;
@@ -350,9 +614,6 @@ public partial class Form1 : Form
         return new PointF(normX, normY);
     }
 
-    /// <summary>
-    /// 以归一化坐标（0~1 比例位置）为缩放中心，缩放后该比例位置的屏幕位置严格不变
-    /// </summary>
     private static PointF ZoomAtNormalized(PointF norm, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
     {
         float oldScaledWidth = imageSize.Width * oldZoom;
@@ -368,9 +629,6 @@ public partial class Form1 : Form
         return new PointF(newOffsetX, newOffsetY);
     }
 
-    /// <summary>
-    /// 以归一化坐标为缩放中心缩放，并将该点移动到目标屏幕位置（用于被动图同步缩放中心位置）
-    /// </summary>
     private static PointF ZoomAndMoveToTarget(PointF norm, Rectangle drawArea, float newZoom, Size imageSize, PointF targetScreenPos)
     {
         float newScaledWidth = imageSize.Width * newZoom;
@@ -385,9 +643,28 @@ public partial class Form1 : Form
         return (ModifierKeys & Keys.Alt) == Keys.Alt;
     }
 
-    /// <summary>
-    /// 首次显示时自动计算初始缩放，使图片都能完整显示
-    /// </summary>
+    private void ToggleMaximize()
+    {
+        if (_isWindowMaximized)
+        {
+            this.WindowState = FormWindowState.Normal;
+            _isWindowMaximized = false;
+        }
+        else
+        {
+            this.WindowState = FormWindowState.Maximized;
+            _isWindowMaximized = true;
+        }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        _isWindowMaximized = this.WindowState == FormWindowState.Maximized;
+        UpdateBaseZoom();
+        this.Invalidate();
+    }
+
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
@@ -403,7 +680,6 @@ public partial class Form1 : Form
     {
         if (ModifierKeys == Keys.Control)
         {
-            // Ctrl+滚轮：左右移动
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Width * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
@@ -412,7 +688,6 @@ public partial class Form1 : Form
         }
         else if (IsAltPressed())
         {
-            // Alt+滚轮：以鼠标指针为中心缩放
             float zoomFactor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
             float oldZoomLevel = _zoomLevel;
             float newZoomLevel = _zoomLevel * zoomFactor;
@@ -422,7 +697,7 @@ public partial class Form1 : Form
 
             PointF mousePos = e.Location;
             int activeIdx = HitTest(mousePos);
-            if (activeIdx < 0 || _images[activeIdx] == null)
+            if (activeIdx < 0 || activeIdx >= _images.Length || _images[activeIdx] == null)
             {
                 _zoomLevel = newZoomLevel;
                 this.Invalidate();
@@ -434,15 +709,12 @@ public partial class Form1 : Form
             float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
             float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
 
-            // 主动图：以鼠标位置为中心缩放，不移动
             PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
             _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
 
-            // 鼠标在主动图面板中的局部坐标
             float activeLocalX = mousePos.X - activeRect.Left;
             float activeLocalY = mousePos.Y - activeRect.Top;
 
-            // 被动图：以相同归一化坐标缩放，并将缩放中心移到对应位置
             for (int i = 0; i < _imageCount; i++)
             {
                 if (i == activeIdx || _images[i] == null) continue;
@@ -459,7 +731,6 @@ public partial class Form1 : Form
         }
         else
         {
-            // 单独滚轮：上下移动
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Height * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? -step : step;
