@@ -1838,7 +1838,6 @@ public partial class Form1 : Form
         try
         {
             string exePath = Application.ExecutablePath;
-            string? icoPath = FindIconPath();
 
             // 删除旧项（如果存在）
             using (var baseKey = Microsoft.Win32.Registry.CurrentUser)
@@ -1852,7 +1851,7 @@ public partial class Form1 : Form
             {
                 regKey.SetValue("MUIVerb", "对比图片");
                 regKey.SetValue("MultiSelectModel", "Player");
-                regKey.SetValue("Icon", icoPath ?? $"{exePath},0");
+                regKey.SetValue("Icon", $"{exePath},0");
             }
 
             // 创建 command 子项
@@ -1883,20 +1882,7 @@ public partial class Form1 : Form
         catch { }
     }
 
-    /// <summary>
-    /// 查找 app.ico 图标文件（与 exe 同目录或上级目录）
-    /// </summary>
-    private static string? FindIconPath()
-    {
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        // 检查 exe 同目录
-        string icoPath = Path.Combine(baseDir, "app.ico");
-        if (File.Exists(icoPath)) return icoPath;
-        // 检查上级目录
-        icoPath = Path.Combine(baseDir, "..", "..", "app.ico");
-        if (File.Exists(icoPath)) return Path.GetFullPath(icoPath);
-        return null;
-    }
+
 
     protected override void OnResize(EventArgs e)
     {
