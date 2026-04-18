@@ -47,6 +47,27 @@ public class ThemeColorSet
     public Color DropHintBorder { get; init; }
     public Color DropHintFg { get; init; }
 
+    // 自定义对话框
+    public Color DialogBg { get; init; }
+    public Color DialogFg { get; init; }
+    public Color DialogBorder { get; init; }
+    public Color DialogBtnBg { get; init; }
+    public Color DialogBtnFg { get; init; }
+    public Color DialogBtnHoverBg { get; init; }
+    public Color DialogBtnActiveBg { get; init; }
+
+    // 重置偏移面板
+    public Color ResetPanelBg { get; init; }
+    public Color ResetPanelBorder { get; init; }
+    public Color ResetPanelFg { get; init; }
+    public Color ResetPanelSubFg { get; init; }
+    public Color ResetCellBg { get; init; }
+    public Color ResetCellBorder { get; init; }
+    public Color ResetCellHoverBg { get; init; }
+    public Color ResetCellSelectedBg { get; init; }
+    public Color ResetCellSelectedBorder { get; init; }
+    public Color ResetCellHasOffsetMark { get; init; }
+
     public static ThemeColorSet Dark => new()
     {
         TitleBarBg = Color.FromArgb(32, 32, 32),
@@ -74,6 +95,25 @@ public class ThemeColorSet
 
         DropHintBorder = Color.FromArgb(100, 149, 237),
         DropHintFg = Color.FromArgb(180, 180, 180),
+
+        DialogBg = Color.FromArgb(45, 45, 45),
+        DialogFg = Color.FromArgb(220, 220, 220),
+        DialogBorder = Color.FromArgb(80, 80, 80),
+        DialogBtnBg = Color.FromArgb(62, 62, 62),
+        DialogBtnFg = Color.FromArgb(200, 200, 200),
+        DialogBtnHoverBg = Color.FromArgb(80, 80, 80),
+        DialogBtnActiveBg = Color.FromArgb(100, 149, 237),
+
+        ResetPanelBg = Color.FromArgb(38, 38, 38),
+        ResetPanelBorder = Color.FromArgb(70, 70, 70),
+        ResetPanelFg = Color.FromArgb(220, 220, 220),
+        ResetPanelSubFg = Color.FromArgb(140, 140, 140),
+        ResetCellBg = Color.FromArgb(50, 50, 50),
+        ResetCellBorder = Color.FromArgb(70, 70, 70),
+        ResetCellHoverBg = Color.FromArgb(65, 65, 65),
+        ResetCellSelectedBg = Color.FromArgb(40, 90, 160),
+        ResetCellSelectedBorder = Color.FromArgb(100, 149, 237),
+        ResetCellHasOffsetMark = Color.FromArgb(255, 165, 0),
     };
 
     public static ThemeColorSet Light => new()
@@ -103,6 +143,25 @@ public class ThemeColorSet
 
         DropHintBorder = Color.FromArgb(100, 149, 237),
         DropHintFg = Color.FromArgb(100, 100, 100),
+
+        DialogBg = Color.FromArgb(245, 245, 245),
+        DialogFg = Color.FromArgb(30, 30, 30),
+        DialogBorder = Color.FromArgb(180, 180, 180),
+        DialogBtnBg = Color.FromArgb(230, 230, 230),
+        DialogBtnFg = Color.FromArgb(40, 40, 40),
+        DialogBtnHoverBg = Color.FromArgb(210, 210, 210),
+        DialogBtnActiveBg = Color.FromArgb(100, 149, 237),
+
+        ResetPanelBg = Color.FromArgb(242, 242, 242),
+        ResetPanelBorder = Color.FromArgb(190, 190, 190),
+        ResetPanelFg = Color.FromArgb(30, 30, 30),
+        ResetPanelSubFg = Color.FromArgb(120, 120, 120),
+        ResetCellBg = Color.FromArgb(255, 255, 255),
+        ResetCellBorder = Color.FromArgb(190, 190, 190),
+        ResetCellHoverBg = Color.FromArgb(230, 240, 255),
+        ResetCellSelectedBg = Color.FromArgb(180, 210, 250),
+        ResetCellSelectedBorder = Color.FromArgb(100, 149, 237),
+        ResetCellHasOffsetMark = Color.FromArgb(230, 130, 0),
     };
 
     public static ThemeColorSet FromTheme(AppTheme theme)
