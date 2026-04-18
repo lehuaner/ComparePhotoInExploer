@@ -30,17 +30,12 @@ public partial class Form1 : Form
     private ThemeColorSet _colors = ThemeColorSet.Dark;
 
     // 自绘标题栏
-    private const int TitleBarH = 32;
+    public const int TitleBarHeight = 32;
     private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset;
     private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
-    private bool _showReset = false; // 是否显示偏移重置覆盖层
-    private int _hoverResetCell = -1; // 悬停的重置缩略图索引
-    private HashSet<int> _selectedResetCells = new(); // 选中的重置图索引
-    private bool _resetSelecting = false; // 是否正在框选
-    private Point _resetSelectStart; // 框选起点
-    private Point _resetSelectEnd; // 框选终点
+    private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
     // 拖放
     private bool _isDragOver = false; // 是否有文件正在拖入
@@ -61,6 +56,9 @@ public partial class Form1 : Form
     public Form1(string[] imagePaths)
     {
         InitializeComponent();
+
+        // 初始化重置偏移覆盖层
+        _resetOverlay = new ResetOverlayHelper(this);
 
         // 加载主题设置
         LoadThemeSetting();
@@ -431,6 +429,7 @@ public partial class Form1 : Form
         _zoomLevel = 1.0f;
         _showHelp = false;
         _shiftDragIndex = -1;
+        _resetOverlay.Hide();
 
         this.Text = $"图片对比 ({_imageCount}张)";
 
@@ -494,7 +493,7 @@ public partial class Form1 : Form
     /// </summary>
     private Rectangle GetCellRect(int index)
     {
-        int topOffset = TitleBarH;
+        int topOffset = TitleBarHeight;
         int availW = Math.Max(1, this.ClientSize.Width);
         int availH = Math.Max(1, this.ClientSize.Height - topOffset);
         int cellW = Math.Max(1, availW / _cols);
@@ -539,11 +538,9 @@ public partial class Form1 : Form
         else if (e.KeyCode == Keys.Escape)
         {
             // Esc优先关闭当前打开的界面，只有都关闭时才关闭程序
-            if (_showReset)
+            if (_resetOverlay.IsVisible)
             {
-                _showReset = false;
-                _selectedResetCells.Clear();
-                _hoverResetCell = -1;
+                _resetOverlay.Hide();
                 this.Invalidate();
             }
             else if (_showHelp)
@@ -597,7 +594,7 @@ public partial class Form1 : Form
 
                 // 绘制网格分割线
                 using var pen = new Pen(_colors.GridLineColor, 2);
-                int topOffset = TitleBarH;
+                int topOffset = TitleBarHeight;
                 int availH = this.ClientSize.Height - topOffset;
                 int cellW = this.ClientSize.Width / _cols;
                 int cellH = availH / _rows;
@@ -619,15 +616,15 @@ public partial class Form1 : Form
             }
 
             // 偏移重置覆盖层
-            if (_showReset && _imageCount > 0)
+            if (_resetOverlay.IsVisible && _imageCount > 0)
             {
-                DrawResetOverlay(e.Graphics);
+                _resetOverlay.Draw(e.Graphics, _imageCount, _images, _manualOffsets, _imagePaths, _colors);
             }
 
             // 历史记录覆盖层（浮在图片区域上方）
             if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
             {
-                _historyBarData.Draw(e.Graphics, 0, TitleBarH, this.ClientSize.Width, _hoverHistoryGroup, _colors);
+                _historyBarData.Draw(e.Graphics, 0, TitleBarHeight, this.ClientSize.Width, _hoverHistoryGroup, _colors);
             }
 
             // 按键说明（由标题栏按钮触发，与历史记录互斥）
@@ -638,7 +635,7 @@ public partial class Form1 : Form
         }
         catch (Exception ex)
         {
-            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, TitleBarH + 10);
+            e.Graphics.DrawString($"错误: {ex.Message}", this.Font, Brushes.Red, 10, TitleBarHeight + 10);
         }
     }
 
@@ -647,7 +644,7 @@ public partial class Form1 : Form
     /// </summary>
     private void DrawEmptyHint(Graphics g)
     {
-        int topOffset = TitleBarH;
+        int topOffset = TitleBarHeight;
         int availW = this.ClientSize.Width;
         int availH = this.ClientSize.Height - topOffset;
 
@@ -669,7 +666,7 @@ public partial class Form1 : Form
     /// </summary>
     private void DrawDropOverlay(Graphics g)
     {
-        int topOffset = TitleBarH;
+        int topOffset = TitleBarHeight;
         int availW = this.ClientSize.Width;
         int availH = this.ClientSize.Height - topOffset;
 
@@ -690,292 +687,6 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 偏移重置面板 — 仿照历史记录的顶部半透明栏样式，缩略图横排+框选
-    /// </summary>
-    private void DrawResetOverlay(Graphics g)
-    {
-        int topOffset = TitleBarH;
-        int availW = this.ClientSize.Width;
-
-        // 面板参数（与历史记录类似）
-        const int thumbSize = 32;
-        const int paddingSize = 3;
-        const int groupPadding = 6;
-
-        // 计算布局：每张图一个缩略图+间距，自动换行
-        int x = groupPadding;
-        int y = groupPadding;
-        int rowHeight = thumbSize + paddingSize * 2;
-        var cellRects = new Rectangle[_imageCount];
-
-        for (int i = 0; i < _imageCount; i++)
-        {
-            int cellW = thumbSize + paddingSize;
-            if (x + cellW + groupPadding > availW && x > groupPadding)
-            {
-                x = groupPadding;
-                y += rowHeight + paddingSize;
-            }
-            cellRects[i] = new Rectangle(x, y, cellW, rowHeight);
-            x += cellW + groupPadding;
-        }
-
-        // 加上批量重置按钮的空间
-        int batchBtnW = 90;
-        int batchBtnH = 26;
-        if (x + batchBtnW + groupPadding > availW && x > groupPadding)
-        {
-            x = groupPadding;
-            y += rowHeight + paddingSize;
-        }
-        var batchBtnRect = new Rectangle(x, y + (rowHeight - batchBtnH) / 2, batchBtnW, batchBtnH);
-
-        // 覆盖层总高度
-        int totalHeight = y + rowHeight + groupPadding;
-
-        // 半透明背景
-        using var bgBrush = new SolidBrush(_colors.HistoryOverlayBg);
-        g.FillRectangle(bgBrush, 0, topOffset, availW, totalHeight);
-
-        // 底部分割线
-        using var bottomPen = new Pen(_colors.HistoryBorder, 1);
-        g.DrawLine(bottomPen, 0, topOffset + totalHeight - 1, availW, topOffset + totalHeight - 1);
-
-        // 绘制每张缩略图
-        for (int i = 0; i < _imageCount; i++)
-        {
-            var rect = cellRects[i];
-            bool hasOffset = _manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0;
-            bool isSelected = _selectedResetCells.Contains(i);
-            bool isHover = i == _hoverResetCell;
-
-            // 仅有偏移的图可以被选中和悬停
-            bool canSelect = hasOffset;
-
-            if (canSelect)
-            {
-                // 悬停/选中背景
-                if (isSelected)
-                {
-                    using var selBrush = new SolidBrush(_colors.ResetCellSelectedBg);
-                    g.FillRectangle(selBrush, rect);
-                    using var selPen = new Pen(_colors.ResetCellSelectedBorder, 1);
-                    g.DrawRectangle(selPen, rect);
-                }
-                else if (isHover)
-                {
-                    using var hlBrush = new SolidBrush(_colors.HistoryHoverBg);
-                    g.FillRectangle(hlBrush, rect);
-                    using var hlPen = new Pen(_colors.HistoryHoverBorder, 1);
-                    g.DrawRectangle(hlPen, rect);
-                }
-                else
-                {
-                    using var borderPen = new Pen(_colors.HistoryBorder, 1);
-                    g.DrawRectangle(borderPen, rect);
-                }
-            }
-            else
-            {
-                // 无偏移的图：淡化显示，不可交互
-                using var borderPen = new Pen(Color.FromArgb(60, _colors.HistoryBorder), 1);
-                g.DrawRectangle(borderPen, rect);
-            }
-
-            // 绘制缩略图
-            int tx = rect.X + paddingSize;
-            int ty = rect.Y + paddingSize;
-            if (_images[i] != null)
-            {
-                if (canSelect)
-                {
-                    g.DrawImage(_images[i]!, tx, ty, thumbSize, thumbSize);
-                }
-                else
-                {
-                    // 无偏移图淡化
-                    using var bmp = new Bitmap(_images[i]!, thumbSize, thumbSize);
-                    using var imgAttr = new System.Drawing.Imaging.ImageAttributes();
-                    var matrix = new System.Drawing.Imaging.ColorMatrix { Matrix33 = 0.3f };
-                    imgAttr.SetColorMatrix(matrix);
-                    g.DrawImage(bmp, new Rectangle(tx, ty, thumbSize, thumbSize),
-                        0, 0, thumbSize, thumbSize, GraphicsUnit.Pixel, imgAttr);
-                }
-            }
-
-            // 有偏移标记（橙色小圆点）
-            if (hasOffset)
-            {
-                using var markBrush = new SolidBrush(_colors.ResetCellHasOffsetMark);
-                g.FillEllipse(markBrush, tx + thumbSize - 8, ty, 7, 7);
-            }
-        }
-
-        // 批量重置按钮
-        bool hasSelection = _selectedResetCells.Count > 0;
-        Color batchBg = hasSelection ? _colors.DialogBtnActiveBg : _colors.DialogBtnBg;
-        Color batchFg = hasSelection ? Color.White : _colors.DialogBtnFg;
-        using (var batchBgBrush = new SolidBrush(batchBg))
-            g.FillRectangle(batchBgBrush, batchBtnRect);
-        using var batchBorderPen = new Pen(_colors.DialogBorder, 1);
-        g.DrawRectangle(batchBorderPen, batchBtnRect);
-        using var batchFont = new Font("Microsoft YaHei UI", 8F);
-        using var batchFgBrush = new SolidBrush(batchFg);
-        var batchLabel = hasSelection ? $"重置({_selectedResetCells.Count})" : "批量重置";
-        var batchLabelSize = g.MeasureString(batchLabel, batchFont);
-        g.DrawString(batchLabel, batchFont, batchFgBrush,
-            batchBtnRect.Left + (batchBtnRect.Width - batchLabelSize.Width) / 2,
-            batchBtnRect.Top + (batchBtnRect.Height - batchLabelSize.Height) / 2);
-        _btnBatchReset = batchBtnRect;
-
-        // 操作说明（悬停时显示）
-        if (_hoverResetCell >= 0 || _selectedResetCells.Count > 0)
-        {
-            using var hintFont = new Font("Microsoft YaHei UI", 8F);
-            using var hintFg = new SolidBrush(_colors.ResetPanelSubFg);
-            string hint = "左键选中 | 右键重置 | 框选多选 | Esc关闭";
-            g.DrawString(hint, hintFont, hintFg, availW - g.MeasureString(hint, hintFont).Width - groupPadding, topOffset + totalHeight - 16);
-        }
-
-        // 框选矩形
-        if (_resetSelecting)
-        {
-            int selX = Math.Min(_resetSelectStart.X, _resetSelectEnd.X);
-            int selY = Math.Min(_resetSelectStart.Y, _resetSelectEnd.Y);
-            int selW = Math.Abs(_resetSelectEnd.X - _resetSelectStart.X);
-            int selH = Math.Abs(_resetSelectEnd.Y - _resetSelectStart.Y);
-            if (selW > 2 && selH > 2)
-            {
-                using var selBrush = new SolidBrush(Color.FromArgb(40, 100, 149, 237));
-                g.FillRectangle(selBrush, selX, selY, selW, selH);
-                using var selPen = new Pen(Color.FromArgb(100, 149, 237), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
-                g.DrawRectangle(selPen, selX, selY, selW, selH);
-            }
-        }
-    }
-
-    private Rectangle _btnBatchReset; // 批量重置按钮区域
-
-    /// <summary>
-    /// 检测鼠标是否在重置偏移面板区域内
-    /// </summary>
-    private bool IsInResetOverlayArea(Point mousePos)
-    {
-        if (!_showReset || _imageCount == 0) return false;
-
-        int topOffset = TitleBarH;
-        int availW = this.ClientSize.Width;
-
-        const int thumbSize = 32;
-        const int paddingSize = 3;
-        const int groupPadding = 6;
-        int rowHeight = thumbSize + paddingSize * 2;
-
-        // 计算覆盖层高度（与DrawResetOverlay逻辑一致）
-        int x = groupPadding;
-        int y = groupPadding;
-
-        for (int i = 0; i < _imageCount; i++)
-        {
-            int cellW = thumbSize + paddingSize;
-            if (x + cellW + groupPadding > availW && x > groupPadding)
-            {
-                x = groupPadding;
-                y += rowHeight + paddingSize;
-            }
-            x += cellW + groupPadding;
-        }
-        // 加上批量重置按钮
-        if (x + 90 + groupPadding > availW && x > groupPadding)
-            y += rowHeight + paddingSize;
-
-        int totalHeight = y + rowHeight + groupPadding;
-
-        return mousePos.Y >= topOffset && mousePos.Y < topOffset + totalHeight;
-    }
-
-    /// <summary>
-    /// 检测鼠标是否在重置面板的某个缩略图上（仅有偏移的图片可选中）
-    /// </summary>
-    private int HitTestResetCell(Point mousePos)
-    {
-        int topOffset = TitleBarH;
-        int availW = this.ClientSize.Width;
-
-        const int thumbSize = 32;
-        const int paddingSize = 3;
-        const int groupPadding = 6;
-        int rowHeight = thumbSize + paddingSize * 2;
-
-        int x = groupPadding;
-        int y = groupPadding;
-
-        for (int i = 0; i < _imageCount; i++)
-        {
-            int cellW = thumbSize + paddingSize;
-            if (x + cellW + groupPadding > availW && x > groupPadding)
-            {
-                x = groupPadding;
-                y += rowHeight + paddingSize;
-            }
-            var cellRect = new Rectangle(x, y, cellW, rowHeight);
-            var absRect = new Rectangle(cellRect.X, topOffset + cellRect.Y, cellRect.Width, cellRect.Height);
-            if (absRect.Contains(mousePos))
-            {
-                // 仅有偏移的图片可以被选中
-                if (_manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0)
-                    return i;
-                return -1;
-            }
-            x += cellW + groupPadding;
-        }
-        return -1;
-    }
-
-    /// <summary>
-    /// 获取框选范围内命中的缩略图索引集合（仅有偏移的图片可选中）
-    /// </summary>
-    private HashSet<int> GetCellsInSelection(Point start, Point end)
-    {
-        var result = new HashSet<int>();
-        int selX = Math.Min(start.X, end.X);
-        int selY = Math.Min(start.Y, end.Y);
-        int selW = Math.Abs(end.X - start.X);
-        int selH = Math.Abs(end.Y - start.Y);
-        var selRect = new Rectangle(selX, selY, selW, selH);
-
-        int topOffset = TitleBarH;
-        int availW = this.ClientSize.Width;
-
-        const int thumbSize = 32;
-        const int paddingSize = 3;
-        const int groupPadding = 6;
-        int rowHeight = thumbSize + paddingSize * 2;
-
-        int x = groupPadding;
-        int y = groupPadding;
-
-        for (int i = 0; i < _imageCount; i++)
-        {
-            int cellW = thumbSize + paddingSize;
-            if (x + cellW + groupPadding > availW && x > groupPadding)
-            {
-                x = groupPadding;
-                y += rowHeight + paddingSize;
-            }
-            var cellRect = new Rectangle(x, topOffset + y, cellW, rowHeight);
-            if (selRect.IntersectsWith(cellRect))
-            {
-                // 仅有偏移的图片可以被选中
-                if (_manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0)
-                    result.Add(i);
-            }
-            x += cellW + groupPadding;
-        }
-        return result;
-    }
-
-    /// <summary>
     /// 自绘标题栏 — 左侧"历史记录"+"操作说明"+"主题"按钮，右侧最小化/最大化/关闭
     /// </summary>
     private void DrawTitleBar(Graphics g)
@@ -984,13 +695,13 @@ public partial class Form1 : Form
 
         // 标题栏背景
         using var bgBrush = new SolidBrush(_colors.TitleBarBg);
-        g.FillRectangle(bgBrush, 0, 0, w, TitleBarH);
+        g.FillRectangle(bgBrush, 0, 0, w, TitleBarHeight);
 
         // 按钮起始位置
         int btnX = 8;
 
         // 历史记录按钮
-        _btnHistory = new Rectangle(btnX, 0, 72, TitleBarH);
+        _btnHistory = new Rectangle(btnX, 0, 72, TitleBarHeight);
         bool historyActive = !_historyBarData.IsCollapsed;
         Color historyBg = historyActive ? _colors.TitleBarBtnActiveBg :
                           _hoverHistory ? _colors.TitleBarBtnHoverBg : Color.Transparent;
@@ -1005,7 +716,7 @@ public partial class Form1 : Form
 
         // 操作说明按钮
         btnX += 72 + 2;
-        _btnHelp = new Rectangle(btnX, 0, 72, TitleBarH);
+        _btnHelp = new Rectangle(btnX, 0, 72, TitleBarHeight);
         Color helpBg = _showHelp ? _colors.TitleBarBtnActiveBg :
                        _hoverHelp ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var helpBgBrush = new SolidBrush(helpBg))
@@ -1020,7 +731,7 @@ public partial class Form1 : Form
         // 主题切换按钮（固定宽度，避免文字变化导致按钮宽度跳动）
         btnX += 72 + 2;
         int themeBtnW = 72;
-        _btnTheme = new Rectangle(btnX, 0, themeBtnW, TitleBarH);
+        _btnTheme = new Rectangle(btnX, 0, themeBtnW, TitleBarHeight);
         Color themeBg = _hoverTheme ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var themeBgBrush = new SolidBrush(themeBg))
             g.FillRectangle(themeBgBrush, _btnTheme);
@@ -1037,8 +748,8 @@ public partial class Form1 : Form
         bool hasAnyOffset = _imageCount > 0 && _manualOffsets.Any(o => o.X != 0 || o.Y != 0);
         if (hasAnyOffset)
         {
-            _btnReset = new Rectangle(btnX, 0, 72, TitleBarH);
-            Color resetBg = _showReset ? _colors.TitleBarBtnActiveBg :
+            _btnReset = new Rectangle(btnX, 0, 72, TitleBarHeight);
+            Color resetBg = _resetOverlay.IsVisible ? _colors.TitleBarBtnActiveBg :
                             _hoverReset ? _colors.TitleBarBtnHoverBg : Color.Transparent;
             using (var resetBgBrush = new SolidBrush(resetBg))
                 g.FillRectangle(resetBgBrush, _btnReset);
@@ -1056,7 +767,7 @@ public partial class Form1 : Form
 
         // 窗口控制按钮区域
         int btnW = 46;
-        int btnH = TitleBarH;
+        int btnH = TitleBarHeight;
         int x = w - btnW * 3;
 
         _btnMin = new Rectangle(x, 0, btnW, btnH);
@@ -1118,7 +829,7 @@ public partial class Form1 : Form
 
         float boxWidth = 380f;
         float boxHeight = instructions.Length * 22 + 20;
-        int topOffset = TitleBarH;
+        int topOffset = TitleBarHeight;
         using (var bgBrush = new SolidBrush(_colors.HelpPanelBg))
         {
             g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
@@ -1195,7 +906,7 @@ public partial class Form1 : Form
     private void Form1_MouseDown(object? sender, MouseEventArgs e)
     {
         // 标题栏区域处理
-        if (e.Location.Y < TitleBarH)
+        if (e.Location.Y < TitleBarHeight)
         {
             if (_btnClose.Contains(e.Location))
             {
@@ -1238,13 +949,13 @@ public partial class Form1 : Form
             // 重置偏移按钮
             if (!_btnReset.IsEmpty && _btnReset.Contains(e.Location))
             {
-                _showReset = !_showReset;
-                if (_showReset)
+                _resetOverlay.IsVisible = !_resetOverlay.IsVisible;
+                if (_resetOverlay.IsVisible)
                 {
                     _showHelp = false;
                     _historyBarData.Collapse();
                 }
-                _hoverResetCell = -1;
+                _resetOverlay.HoverCell = -1;
                 this.Invalidate();
                 return;
             }
@@ -1257,7 +968,7 @@ public partial class Form1 : Form
         // 历史记录覆盖层区域 — 处理点击
         if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
         {
-            int hitIdx = _historyBarData.HitTest(0, TitleBarH, this.ClientSize.Width, e.Location, 0);
+            int hitIdx = _historyBarData.HitTest(0, TitleBarHeight, this.ClientSize.Width, e.Location, 0);
             if (hitIdx >= 0)
             {
                 if (e.Button == MouseButtons.Left)
@@ -1300,93 +1011,98 @@ public partial class Form1 : Form
         }
 
         // 重置偏移模式：如果点击在面板外，自动关闭并跳过本次操作
-        if (_showReset && !IsInResetOverlayArea(e.Location))
+        if (_resetOverlay.IsVisible && !_resetOverlay.IsInOverlayArea(e.Location, _imageCount))
         {
-            _showReset = false;
-            _selectedResetCells.Clear();
-            _hoverResetCell = -1;
+            _resetOverlay.Hide();
             this.Invalidate();
             return;
         }
 
         // 重置偏移模式下的交互
-        if (_showReset)
+        if (_resetOverlay.IsVisible)
         {
             if (e.Button == MouseButtons.Left)
             {
-                // 点击批量重置按钮
-                if (_btnBatchReset.Contains(e.Location) && _selectedResetCells.Count > 0)
+                // 点击全部重置按钮
+                if (_resetOverlay.BatchResetButton.Contains(e.Location))
                 {
-                    var names = string.Join(", ", _selectedResetCells.Select(i => Path.GetFileName(_imagePaths[i])));
-                    var result = ThemedMessageBox.Show(this,
-                        $"确定重置以下 {_selectedResetCells.Count} 张图片的偏移？\n\n{names}",
-                        "批量重置偏移", MessageBoxButtons.YesNo, _colors);
-                    if (result == DialogResult.Yes)
+                    // 收集所有有偏移的图片索引
+                    var offsetIndices = new List<int>();
+                    for (int i = 0; i < _imageCount; i++)
                     {
-                        foreach (int idx in _selectedResetCells)
+                        if (_manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0)
+                            offsetIndices.Add(i);
+                    }
+                    if (offsetIndices.Count > 0)
+                    {
+                        var names = string.Join(", ", offsetIndices.Select(i => Path.GetFileName(_imagePaths[i])));
+                        var result = ThemedMessageBox.Show(this,
+                            $"确定重置以下 {offsetIndices.Count} 张图片的偏移？\n\n{names}",
+                            "全部重置偏移", MessageBoxButtons.YesNo, _colors);
+                        if (result == DialogResult.Yes)
                         {
-                            _offsets[idx] = new PointF(
-                                _offsets[idx].X - _manualOffsets[idx].X,
-                                _offsets[idx].Y - _manualOffsets[idx].Y);
-                            _manualOffsets[idx] = new PointF(0, 0);
+                            foreach (int idx in offsetIndices)
+                            {
+                                _offsets[idx] = new PointF(
+                                    _offsets[idx].X - _manualOffsets[idx].X,
+                                    _offsets[idx].Y - _manualOffsets[idx].Y);
+                                _manualOffsets[idx] = new PointF(0, 0);
+                            }
+                            _resetOverlay.Hide();
+                            this.Invalidate();
                         }
-                        _selectedResetCells.Clear();
-                        // 如果没有偏移了，自动关闭面板
-                        if (!_manualOffsets.Any(o => o.X != 0 || o.Y != 0))
-                            _showReset = false;
-                        this.Invalidate();
                     }
                     return;
                 }
 
                 // 点击缩略图选中/取消选中
-                int hitIdx = HitTestResetCell(e.Location);
+                int hitIdx = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets);
                 if (hitIdx >= 0)
                 {
-                    if ((ModifierKeys & Keys.Control) == Keys.Control)
-                    {
-                        // Ctrl+点击: 切换选中
-                        if (_selectedResetCells.Contains(hitIdx))
-                            _selectedResetCells.Remove(hitIdx);
-                        else
-                            _selectedResetCells.Add(hitIdx);
-                    }
+                    // 切换选中（普通点击也切换）
+                    if (_resetOverlay.SelectedCells.Contains(hitIdx))
+                        _resetOverlay.SelectedCells.Remove(hitIdx);
+                    else if ((ModifierKeys & Keys.Control) == Keys.Control)
+                        _resetOverlay.SelectedCells.Add(hitIdx);
                     else
                     {
-                        // 普通点击: 仅选中此图
-                        _selectedResetCells.Clear();
-                        _selectedResetCells.Add(hitIdx);
+                        _resetOverlay.SelectedCells.Clear();
+                        _resetOverlay.SelectedCells.Add(hitIdx);
                     }
                     this.Invalidate();
                     return;
                 }
 
-                // 点击空白处开始框选
-                _resetSelecting = true;
-                _resetSelectStart = e.Location;
-                _resetSelectEnd = e.Location;
+                // 点击空白处：取消选择，并开始框选
+                _resetOverlay.SelectedCells.Clear();
+                _resetOverlay.IsSelecting = true;
+                _resetOverlay.SelectStart = e.Location;
+                _resetOverlay.SelectEnd = e.Location;
+                _resetOverlay.LastSelectRect = Rectangle.Empty;
+                this.Invalidate();
             }
             else if (e.Button == MouseButtons.Right)
             {
                 // 右键重置选中的图片
-                if (_selectedResetCells.Count > 0)
+                if (_resetOverlay.SelectedCells.Count > 0)
                 {
-                    var names = string.Join(", ", _selectedResetCells.Select(i => Path.GetFileName(_imagePaths[i])));
+                    var names = string.Join(", ", _resetOverlay.SelectedCells.Select(i => Path.GetFileName(_imagePaths[i])));
                     var result = ThemedMessageBox.Show(this,
-                        $"确定重置以下 {_selectedResetCells.Count} 张图片的偏移？\n\n{names}",
+                        $"确定重置以下 {_resetOverlay.SelectedCells.Count} 张图片的偏移？\n\n{names}",
                         "重置偏移", MessageBoxButtons.YesNo, _colors);
                     if (result == DialogResult.Yes)
                     {
-                        foreach (int idx in _selectedResetCells)
+                        foreach (int idx in _resetOverlay.SelectedCells)
                         {
                             _offsets[idx] = new PointF(
                                 _offsets[idx].X - _manualOffsets[idx].X,
                                 _offsets[idx].Y - _manualOffsets[idx].Y);
                             _manualOffsets[idx] = new PointF(0, 0);
                         }
-                        _selectedResetCells.Clear();
                         if (!_manualOffsets.Any(o => o.X != 0 || o.Y != 0))
-                            _showReset = false;
+                            _resetOverlay.Hide();
+                        else
+                            _resetOverlay.SelectedCells.Clear();
                         this.Invalidate();
                     }
                 }
@@ -1416,7 +1132,7 @@ public partial class Form1 : Form
     private void Form1_MouseMove(object? sender, MouseEventArgs e)
     {
         // 标题栏悬停效果
-        if (e.Location.Y < TitleBarH)
+        if (e.Location.Y < TitleBarHeight)
         {
             bool newHoverMin = _btnMin.Contains(e.Location);
             bool newHoverMax = _btnMax.Contains(e.Location);
@@ -1437,7 +1153,7 @@ public partial class Form1 : Form
                 _hoverHistory = newHoverHistory;
                 _hoverTheme = newHoverTheme;
                 _hoverReset = newHoverReset;
-                this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
+                this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
             }
             return;
         }
@@ -1445,7 +1161,7 @@ public partial class Form1 : Form
         // 历史记录覆盖层悬停检测
         if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
         {
-            int newHover = _historyBarData.HitTest(0, TitleBarH, this.ClientSize.Width, e.Location, 0);
+            int newHover = _historyBarData.HitTest(0, TitleBarHeight, this.ClientSize.Width, e.Location, 0);
             if (newHover != _hoverHistoryGroup)
             {
                 _hoverHistoryGroup = newHover;
@@ -1457,25 +1173,41 @@ public partial class Form1 : Form
         }
 
         // 重置偏移模式悬停和框选
-        if (_showReset)
+        if (_resetOverlay.IsVisible)
         {
             // 框选拖动
-            if (_resetSelecting)
+            if (_resetOverlay.IsSelecting)
             {
-                _resetSelectEnd = e.Location;
-                var newSelection = GetCellsInSelection(_resetSelectStart, _resetSelectEnd);
-                if (!_selectedResetCells.SetEquals(newSelection))
+                // 清除旧框选矩形
+                if (!_resetOverlay.LastSelectRect.IsEmpty)
+                    ControlPaint.DrawReversibleFrame(_resetOverlay.LastSelectRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
+
+                _resetOverlay.SelectEnd = e.Location;
+
+                // 绘制新框选矩形
+                int selX = Math.Min(_resetOverlay.SelectStart.X, _resetOverlay.SelectEnd.X);
+                int selY = Math.Min(_resetOverlay.SelectStart.Y, _resetOverlay.SelectEnd.Y);
+                int selW = Math.Abs(_resetOverlay.SelectEnd.X - _resetOverlay.SelectStart.X);
+                int selH = Math.Abs(_resetOverlay.SelectEnd.Y - _resetOverlay.SelectStart.Y);
+                if (selW > 2 && selH > 2)
                 {
-                    _selectedResetCells = newSelection;
-                    this.Invalidate();
+                    var screenRect = this.RectangleToScreen(new Rectangle(selX, selY, selW, selH));
+                    ControlPaint.DrawReversibleFrame(screenRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
+                    _resetOverlay.LastSelectRect = screenRect;
                 }
+                else
+                {
+                    _resetOverlay.LastSelectRect = Rectangle.Empty;
+                }
+
+                // 仅在鼠标释放时计算选中（避免每帧创建HashSet和Invalidate）
                 return;
             }
 
-            int newHoverCell = HitTestResetCell(e.Location);
-            if (newHoverCell != _hoverResetCell)
+            int newHoverCell = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets);
+            if (newHoverCell != _resetOverlay.HoverCell)
             {
-                _hoverResetCell = newHoverCell;
+                _resetOverlay.HoverCell = newHoverCell;
                 this.Cursor = newHoverCell >= 0 ? Cursors.Hand : Cursors.Default;
                 this.Invalidate();
             }
@@ -1512,7 +1244,25 @@ public partial class Form1 : Form
     {
         _isDragging = false;
         _shiftDragIndex = -1;
-        _resetSelecting = false;
+        if (_resetOverlay.IsSelecting)
+        {
+            _resetOverlay.IsSelecting = false;
+            // 清除框选矩形
+            if (!_resetOverlay.LastSelectRect.IsEmpty)
+            {
+                ControlPaint.DrawReversibleFrame(_resetOverlay.LastSelectRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
+                _resetOverlay.LastSelectRect = Rectangle.Empty;
+            }
+            // 框选结束后计算选中结果
+            var newSelection = _resetOverlay.GetCellsInSelection(_resetOverlay.SelectStart, _resetOverlay.SelectEnd, _imageCount, _manualOffsets);
+            if (newSelection.Count > 0)
+            {
+                _resetOverlay.SelectedCells.Clear();
+                foreach (var idx in newSelection)
+                    _resetOverlay.SelectedCells.Add(idx);
+            }
+            this.Invalidate();
+        }
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -1522,11 +1272,9 @@ public partial class Form1 : Form
         if (keyData == (Keys.Control | Keys.W))
         {
             // Ctrl+W优先关闭当前打开的界面，只有都关闭时才关闭程序
-            if (_showReset)
+            if (_resetOverlay.IsVisible)
             {
-                _showReset = false;
-                _selectedResetCells.Clear();
-                _hoverResetCell = -1;
+                _resetOverlay.Hide();
                 this.Invalidate();
             }
             else if (_showHelp)
@@ -1626,13 +1374,11 @@ public partial class Form1 : Form
     private void Form1_MouseWheel(object? sender, MouseEventArgs e)
     {
         // 滚动操作主操作区时，自动收起历史记录、操作说明和重置偏移
-        if (!_historyBarData.IsCollapsed || _showHelp || _showReset)
+        if (!_historyBarData.IsCollapsed || _showHelp || _resetOverlay.IsVisible)
         {
             _historyBarData.Collapse();
             _showHelp = false;
-            _showReset = false;
-            _selectedResetCells.Clear();
-            _hoverResetCell = -1;
+            _resetOverlay.Hide();
             _hoverHistoryGroup = -1;
         }
 
