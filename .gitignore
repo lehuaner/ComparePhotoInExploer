@@ -57,3 +57,4 @@ publish-test/
 ComparePhotoInExploer-*.zip
 build-release.bat
 .github/workflows/release.yml
+build-release.ps1
