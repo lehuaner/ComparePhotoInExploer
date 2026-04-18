@@ -60,6 +60,9 @@ public partial class Form1 : Form
 
     private const int CornerRadius = 12;
 
+    // 边框调整大小区域宽度
+    private const int ResizeBorderWidth = 6;
+
     private void ApplyRoundCorner()
     {
         if (_isWindowMaximized)
@@ -127,8 +130,20 @@ public partial class Form1 : Form
         this.StartPosition = FormStartPosition.CenterScreen;
         this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
 
+        // 加载上次的窗口位置和大小（覆盖默认值）
+        LoadWindowState();
+
+        // 设置最小窗口大小
+        this.MinimumSize = new Size(500, 350);
+
+        // 保存初始窗口位置
+        _restoreBounds = this.Bounds;
+
         // 圆角边框
         this.Load += (s, e) => ApplyRoundCorner();
+
+        // 关闭时保存窗口状态
+        this.FormClosing += (s, e) => SaveWindowState();
 
         // 允许拖放
         this.AllowDrop = true;
@@ -163,6 +178,15 @@ public partial class Form1 : Form
 
     private const int WM_SYSCOMMAND = 0x0112;
     private const int SC_CLOSE = 0xF060;
+    private const int WM_NCHITTEST = 0x0084;
+    private const int HTLEFT = 10;
+    private const int HTRIGHT = 11;
+    private const int HTTOP = 12;
+    private const int HTTOPLEFT = 13;
+    private const int HTTOPRIGHT = 14;
+    private const int HTBOTTOM = 15;
+    private const int HTBOTTOMLEFT = 16;
+    private const int HTBOTTOMRIGHT = 17;
 
     /// <summary>
     /// 重写以接收系统主题变化消息，以及处理模态对话框期间的任务栏关闭请求
@@ -185,6 +209,27 @@ public partial class Form1 : Form
                 return;
             }
         }
+        // 无边框窗口的边框调整大小支持
+        if (m.Msg == WM_NCHITTEST && !_isWindowMaximized)
+        {
+            var pos = PointToClient(new Point((int)m.LParam));
+            int x = pos.X, y = pos.Y;
+            int w = this.ClientSize.Width, h = this.ClientSize.Height;
+            int bw = ResizeBorderWidth;
+
+            // 检测四角
+            bool onLeft = x < bw, onRight = x >= w - bw;
+            bool onTop = y < bw, onBottom = y >= h - bw;
+
+            if (onTop && onLeft) { m.Result = (IntPtr)HTTOPLEFT; return; }
+            if (onTop && onRight) { m.Result = (IntPtr)HTTOPRIGHT; return; }
+            if (onBottom && onLeft) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
+            if (onBottom && onRight) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
+            if (onLeft) { m.Result = (IntPtr)HTLEFT; return; }
+            if (onRight) { m.Result = (IntPtr)HTRIGHT; return; }
+            if (onTop) { m.Result = (IntPtr)HTTOP; return; }
+            if (onBottom) { m.Result = (IntPtr)HTBOTTOM; return; }
+        }
         base.WndProc(ref m);
     }
 
@@ -193,6 +238,10 @@ public partial class Form1 : Form
     private static readonly string ThemeSettingFile = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "AppData", "Local", "ComparePhotoInExploer", "theme.txt");
+
+    private static readonly string WindowStateFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "AppData", "Local", "ComparePhotoInExploer", "windowstate.txt");
 
     private void LoadThemeSetting()
     {
@@ -249,6 +298,81 @@ public partial class Form1 : Form
         AppTheme.Light => "亮色",
         _ => "跟随系统"
     };
+
+    #endregion
+
+    #region 窗口状态保存与恢复
+
+    private void LoadWindowState()
+    {
+        try
+        {
+            if (!File.Exists(WindowStateFile)) return;
+            var lines = File.ReadAllLines(WindowStateFile);
+            if (lines.Length < 4) return;
+
+            bool maximized = lines[0].Trim() == "1";
+            int x = int.Parse(lines[1].Trim());
+            int y = int.Parse(lines[2].Trim());
+            int w = int.Parse(lines[3].Trim());
+            int h = int.Parse(lines[4].Trim());
+
+            // 确保窗口在可见屏幕范围内
+            var screen = Screen.FromPoint(new Point(x, y));
+            if (screen != null)
+            {
+                // 如果保存的位置超出所有屏幕范围，使用默认位置
+                var bounds = screen.Bounds;
+                if (x < bounds.Left - w || x > bounds.Right || y < bounds.Top - h || y > bounds.Bottom)
+                    return;
+            }
+
+            if (maximized)
+            {
+                this.StartPosition = FormStartPosition.Manual;
+                this.Location = new Point(x, y);
+                this.Size = new Size(w, h);
+                this.WindowState = FormWindowState.Maximized;
+                _isWindowMaximized = true;
+            }
+            else
+            {
+                this.StartPosition = FormStartPosition.Manual;
+                this.Location = new Point(x, y);
+                this.Size = new Size(Math.Max(w, 400), Math.Max(h, 300));
+            }
+        }
+        catch
+        {
+            // 加载失败时使用默认设置
+        }
+    }
+
+    private void SaveWindowState()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(WindowStateFile)!;
+            Directory.CreateDirectory(dir);
+
+            bool maximized = _isWindowMaximized;
+            // 最大化时需要记住还原后的位置和大小
+            var rect = maximized ? _restoreBounds : this.Bounds;
+
+            File.WriteAllLines(WindowStateFile, new[]
+            {
+                maximized ? "1" : "0",
+                rect.X.ToString(),
+                rect.Y.ToString(),
+                rect.Width.ToString(),
+                rect.Height.ToString()
+            });
+        }
+        catch { }
+    }
+
+    // 保存最大化前的窗口位置和大小，用于恢复
+    private Rectangle _restoreBounds;
 
     #endregion
 
@@ -1388,6 +1512,28 @@ public partial class Form1 : Form
 
     private void Form1_MouseMove(object? sender, MouseEventArgs e)
     {
+        // 边框调整大小区域光标
+        if (!_isWindowMaximized && e.Location.Y >= TitleBarHeight)
+        {
+            int x = e.Location.X, y = e.Location.Y;
+            int w = this.ClientSize.Width, h = this.ClientSize.Height;
+            int bw = ResizeBorderWidth;
+
+            bool onLeft = x < bw, onRight = x >= w - bw;
+            bool onTop = y < bw, onBottom = y >= h - bw;
+
+            if ((onTop && onLeft) || (onBottom && onRight))
+                this.Cursor = Cursors.SizeNWSE;
+            else if ((onTop && onRight) || (onBottom && onLeft))
+                this.Cursor = Cursors.SizeNESW;
+            else if (onLeft || onRight)
+                this.Cursor = Cursors.SizeWE;
+            else if (onTop || onBottom)
+                this.Cursor = Cursors.SizeNS;
+            else if (this.Cursor != Cursors.Default && this.Cursor != Cursors.Hand)
+                this.Cursor = Cursors.Default;
+        }
+
         // 标题栏悬停效果
         if (e.Location.Y < TitleBarHeight)
         {
@@ -1574,6 +1720,7 @@ public partial class Form1 : Form
         }
         else
         {
+            _restoreBounds = this.Bounds;
             this.WindowState = FormWindowState.Maximized;
             _isWindowMaximized = true;
         }
@@ -1583,6 +1730,12 @@ public partial class Form1 : Form
     {
         base.OnResize(e);
         _isWindowMaximized = this.WindowState == FormWindowState.Maximized;
+        // 从最大化还原时，不更新 _restoreBounds（保持最大化前的位置）
+        // 非最大化状态下的普通调整大小才更新
+        if (!_isWindowMaximized && this.WindowState == FormWindowState.Normal)
+        {
+            _restoreBounds = this.Bounds;
+        }
         ApplyRoundCorner();
         UpdateBaseZoom();
         this.Invalidate();

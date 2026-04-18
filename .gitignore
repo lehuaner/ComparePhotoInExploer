@@ -50,3 +50,10 @@ ComparePhotoInExploer/obj/
 绕圈4056x2228.png
 build_output.txt
 search_reg.ps1
+
+# Release output
+publish/
+publish-test/
+ComparePhotoInExploer-*.zip
+build-release.bat
+.github/workflows/release.yml
