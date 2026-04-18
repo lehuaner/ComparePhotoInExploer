@@ -31,10 +31,12 @@ public partial class Form1 : Form
 
     // 自绘标题栏
     private const int TitleBarH = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
+    private bool _showReset = false; // 是否显示偏移重置覆盖层
+    private int _hoverResetCell = -1; // 悬停的重置格子索引
 
     // 拖放
     private bool _isDragOver = false; // 是否有文件正在拖入
@@ -586,6 +588,12 @@ public partial class Form1 : Form
                 DrawDropOverlay(e.Graphics);
             }
 
+            // 偏移重置覆盖层
+            if (_showReset && _imageCount > 0)
+            {
+                DrawResetOverlay(e.Graphics);
+            }
+
             // 历史记录覆盖层（浮在图片区域上方）
             if (!_historyBarData.IsCollapsed && _historyBarData.GroupCount > 0)
             {
@@ -652,6 +660,41 @@ public partial class Form1 : Form
     }
 
     /// <summary>
+    /// 偏移重置覆盖层 — 在有manualOffset的图格上显示重置标记
+    /// </summary>
+    private void DrawResetOverlay(Graphics g)
+    {
+        int totalCells = _cols * _rows;
+        for (int i = 0; i < totalCells; i++)
+        {
+            if (i >= _imageCount) continue;
+            var rect = GetCellRect(i);
+            bool hasOffset = _manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0;
+            bool isHover = i == _hoverResetCell;
+
+            if (hasOffset || isHover)
+            {
+                // 半透明覆盖
+                using var overlayBrush = new SolidBrush(isHover && hasOffset
+                    ? Color.FromArgb(60, 232, 17, 35)
+                    : Color.FromArgb(30, 100, 149, 237));
+                g.FillRectangle(overlayBrush, rect);
+
+                // 图标和文字
+                string label = hasOffset ? "右键重置偏移" : "无偏移";
+                using var font = new Font("Microsoft YaHei UI", 10F);
+                using var fgBrush = new SolidBrush(isHover && hasOffset
+                    ? Color.FromArgb(255, 232, 17, 35)
+                    : Color.FromArgb(180, 180, 180));
+                var size = g.MeasureString(label, font);
+                float x = rect.Left + (rect.Width - size.Width) / 2;
+                float y = rect.Top + (rect.Height - size.Height) / 2;
+                g.DrawString(label, font, fgBrush, x, y);
+            }
+        }
+    }
+
+    /// <summary>
     /// 自绘标题栏 — 左侧"历史记录"+"操作说明"+"主题"按钮，右侧最小化/最大化/关闭
     /// </summary>
     private void DrawTitleBar(Graphics g)
@@ -707,6 +750,20 @@ public partial class Form1 : Form
         g.DrawString(themeLabel, themeFont, themeFgBrush,
             _btnTheme.Left + (_btnTheme.Width - themeLabelSize.Width) / 2,
             _btnTheme.Top + (_btnTheme.Height - themeLabelSize.Height) / 2);
+
+        // 重置偏移按钮
+        btnX += themeBtnW + 2;
+        _btnReset = new Rectangle(btnX, 0, 72, TitleBarH);
+        Color resetBg = _showReset ? _colors.TitleBarBtnActiveBg :
+                        _hoverReset ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var resetBgBrush = new SolidBrush(resetBg))
+            g.FillRectangle(resetBgBrush, _btnReset);
+        using var resetFont = new Font("Microsoft YaHei UI", 9F);
+        using var resetFgBrush = new SolidBrush(_colors.TitleBarFg);
+        var resetSize = g.MeasureString("重置偏移", resetFont);
+        g.DrawString("重置偏移", resetFont, resetFgBrush,
+            _btnReset.Left + (_btnReset.Width - resetSize.Width) / 2,
+            _btnReset.Top + (_btnReset.Height - resetSize.Height) / 2);
 
         // 窗口控制按钮区域
         int btnW = 46;
@@ -888,6 +945,19 @@ public partial class Form1 : Form
                 CycleTheme();
                 return;
             }
+            // 重置偏移按钮
+            if (_btnReset.Contains(e.Location))
+            {
+                _showReset = !_showReset;
+                if (_showReset)
+                {
+                    _showHelp = false;
+                    _historyBarData.Collapse();
+                }
+                _hoverResetCell = -1;
+                this.Invalidate();
+                return;
+            }
             // 拖动窗口
             ReleaseCapture();
             SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
@@ -941,6 +1011,42 @@ public partial class Form1 : Form
             this.Invalidate();
         }
 
+        // 重置偏移模式下，右键点击重置该图的偏移
+        if (_showReset && e.Button == MouseButtons.Right)
+        {
+            int cellIdx = HitTest(e.Location);
+            if (cellIdx >= 0 && cellIdx < _imageCount &&
+                (_manualOffsets[cellIdx].X != 0 || _manualOffsets[cellIdx].Y != 0))
+            {
+                string imgName = Path.GetFileName(_imagePaths[cellIdx]);
+                var result = MessageBox.Show(
+                    $"确定重置图片 \"{imgName}\" 的偏移？",
+                    "重置偏移",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question,
+                    MessageBoxDefaultButton.Button2);
+
+                if (result == DialogResult.Yes)
+                {
+                    _offsets[cellIdx] = new PointF(
+                        _offsets[cellIdx].X - _manualOffsets[cellIdx].X,
+                        _offsets[cellIdx].Y - _manualOffsets[cellIdx].Y);
+                    _manualOffsets[cellIdx] = new PointF(0, 0);
+                    this.Invalidate();
+                }
+            }
+            return;
+        }
+
+        // 重置模式下左键点击图片区域，收起重置面板
+        if (_showReset && e.Button == MouseButtons.Left)
+        {
+            _showReset = false;
+            _hoverResetCell = -1;
+            this.Invalidate();
+            return;
+        }
+
         // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
@@ -970,9 +1076,11 @@ public partial class Form1 : Form
             bool newHoverHelp = _btnHelp.Contains(e.Location);
             bool newHoverHistory = _btnHistory.Contains(e.Location);
             bool newHoverTheme = _btnTheme.Contains(e.Location);
+            bool newHoverReset = _btnReset.Contains(e.Location);
 
             if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
-                newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme)
+                newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme ||
+                newHoverReset != _hoverReset)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
@@ -980,6 +1088,7 @@ public partial class Form1 : Form
                 _hoverHelp = newHoverHelp;
                 _hoverHistory = newHoverHistory;
                 _hoverTheme = newHoverTheme;
+                _hoverReset = newHoverReset;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarH));
             }
             return;
@@ -997,6 +1106,21 @@ public partial class Form1 : Form
             }
             if (newHover >= 0)
                 return; // 在历史记录上，不拖动图片
+        }
+
+        // 重置偏移模式悬停检测
+        if (_showReset)
+        {
+            int newHoverCell = HitTest(e.Location);
+            if (newHoverCell != _hoverResetCell)
+            {
+                _hoverResetCell = newHoverCell;
+                this.Cursor = (newHoverCell >= 0 && newHoverCell < _imageCount &&
+                    (_manualOffsets[newHoverCell].X != 0 || _manualOffsets[newHoverCell].Y != 0))
+                    ? Cursors.Hand : Cursors.Default;
+                this.Invalidate();
+            }
+            return; // 重置模式下不拖动图片
         }
 
         if (_isDragging)
