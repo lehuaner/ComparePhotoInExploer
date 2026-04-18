@@ -1153,15 +1153,9 @@ public partial class Form1 : Form
             float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
             float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
 
-            // active图片：从offset中剥离manualOffset，计算同步偏移部分，再加回manualOffset
-            PointF activeSyncOffset = new PointF(
-                _offsets[activeIdx].X - _manualOffsets[activeIdx].X,
-                _offsets[activeIdx].Y - _manualOffsets[activeIdx].Y);
-            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, activeSyncOffset, activeImgSize);
-            var activeNewSync = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, activeSyncOffset, activeImgSize);
-            _offsets[activeIdx] = new PointF(
-                activeNewSync.X + _manualOffsets[activeIdx].X,
-                activeNewSync.Y + _manualOffsets[activeIdx].Y);
+            // active图片：直接使用完整offset，确保以鼠标实际所指位置为基准缩放
+            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
+            _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
 
             float activeLocalX = mousePos.X - activeRect.Left;
             float activeLocalY = mousePos.Y - activeRect.Top;
