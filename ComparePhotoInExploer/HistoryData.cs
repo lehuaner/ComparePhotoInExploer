@@ -171,11 +171,13 @@ public static class HistoryData
     {
         var pathList = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
 
-        // 检查是否有完全相同的组（路径集合相同，顺序相同）
+        // 检查是否有相同的组（路径集合相同，忽略顺序）
+        var pathSet = new HashSet<string>(pathList);
         int dupIdx = -1;
         for (int i = 0; i < existing.Count; i++)
         {
-            if (existing[i].ImagePaths.SequenceEqual(pathList))
+            if (existing[i].ImagePaths.Count == pathList.Count &&
+                existing[i].ImagePaths.All(p => pathSet.Contains(p)))
             {
                 dupIdx = i;
                 break;

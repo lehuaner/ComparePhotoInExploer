@@ -317,8 +317,10 @@ public partial class Form1 : Form
     {
         if (paths == null || paths.Length == 0) return;
 
-        // 检查是否与当前图片相同
-        if (_imagePaths != null && _imagePaths.SequenceEqual(paths))
+        // 检查是否与当前图片相同（忽略顺序）
+        var pathsSet = new HashSet<string>(paths);
+        if (_imagePaths != null && _imagePaths.Length == paths.Length &&
+            _imagePaths.All(p => pathsSet.Contains(p)))
             return;
 
         // 切换到该组图片
@@ -328,7 +330,8 @@ public partial class Form1 : Form
         int idx = -1;
         for (int i = 0; i < _historyGroups.Count; i++)
         {
-            if (_historyGroups[i].ImagePaths.SequenceEqual(paths))
+            if (_historyGroups[i].ImagePaths.Count == paths.Length &&
+                _historyGroups[i].ImagePaths.All(p => pathsSet.Contains(p)))
             {
                 idx = i;
                 break;
@@ -354,10 +357,11 @@ public partial class Form1 : Form
 
         var removed = _historyGroups[groupIndex];
         
-        // 检查是否正在显示该组
+        // 检查是否正在显示该组（忽略顺序）
+        var removedSet = new HashSet<string>(removed.ImagePaths);
         bool isCurrentGroup = _imagePaths != null && 
             _imagePaths.Length == removed.ImagePaths.Count &&
-            _imagePaths.SequenceEqual(removed.ImagePaths);
+            _imagePaths.All(p => removedSet.Contains(p));
         
         HistoryData.DeleteGroupThumbnails(_historyGroups, removed.Id);
         _historyGroups.RemoveAt(groupIndex);
