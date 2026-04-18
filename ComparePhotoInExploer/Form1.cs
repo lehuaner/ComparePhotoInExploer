@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 
 namespace ComparePhotoInExploer;
 
@@ -31,12 +32,13 @@ public partial class Form1 : Form
 
     // 自绘标题栏
     public const int TitleBarHeight = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp, _btnRightClickMenu;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp, _hoverRightClickMenu;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
     private bool _showZoomHelp = false; // 是否显示缩放说明
     private bool _syncZoomPosition = true; // 缩放时是否将被动图片对齐到主动图片鼠标所指位置
+    private bool _rightClickMenuEnabled = true; // 是否启用右键菜单
     private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
     // 拖放
@@ -105,6 +107,14 @@ public partial class Form1 : Form
         // 加载主题设置
         LoadThemeSetting();
         ApplyTheme(_currentTheme);
+        
+        // 加载右键菜单设置
+        LoadRightClickMenuSetting();
+        // 第一次启动时默认安装右键菜单
+        if (_rightClickMenuEnabled)
+        {
+            InstallRightClickMenu();
+        }
 
         _imagePaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
         _imageCount = Math.Clamp(_imagePaths.Length, 0, 9);
@@ -243,6 +253,10 @@ public partial class Form1 : Form
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         "AppData", "Local", "ComparePhotoInExploer", "windowstate.txt");
 
+    private static readonly string RightClickMenuSettingFile = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        "AppData", "Local", "ComparePhotoInExploer", "rightclickmenu.txt");
+
     private void LoadThemeSetting()
     {
         try
@@ -268,6 +282,35 @@ public partial class Form1 : Form
             var dir = Path.GetDirectoryName(ThemeSettingFile)!;
             Directory.CreateDirectory(dir);
             File.WriteAllText(ThemeSettingFile, _currentTheme.ToString());
+        }
+        catch { }
+    }
+
+    private void LoadRightClickMenuSetting()
+    {
+        try
+        {
+            if (File.Exists(RightClickMenuSettingFile))
+            {
+                var text = File.ReadAllText(RightClickMenuSettingFile).Trim();
+                if (bool.TryParse(text, out var enabled))
+                {
+                    _rightClickMenuEnabled = enabled;
+                    return;
+                }
+            }
+        }
+        catch { }
+        _rightClickMenuEnabled = true; // 默认开启
+    }
+
+    private void SaveRightClickMenuSetting()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(RightClickMenuSettingFile)!;
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(RightClickMenuSettingFile, _rightClickMenuEnabled.ToString());
         }
         catch { }
     }
@@ -1019,8 +1062,45 @@ public partial class Form1 : Form
             _btnZoomHelp.Left + (_btnZoomHelp.Width - zoomHelpLabelSize.Width) / 2,
             _btnZoomHelp.Top + (_btnZoomHelp.Height - zoomHelpLabelSize.Height) / 2);
 
+        // 右键菜单单选框
+        btnX += 28 + 10;
+        int rightClickMenuBtnW = 120;
+        _btnRightClickMenu = new Rectangle(btnX, 0, rightClickMenuBtnW, TitleBarHeight);
+        Color rightClickMenuBg = _hoverRightClickMenu ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var rightClickMenuBgBrush = new SolidBrush(rightClickMenuBg))
+            g.FillRectangle(rightClickMenuBgBrush, _btnRightClickMenu);
+        
+        // 绘制单选框
+        int checkBoxSize = 16;
+        int checkBoxX = _btnRightClickMenu.Left + 8;
+        int checkBoxY = (_btnRightClickMenu.Height - checkBoxSize) / 2;
+        Rectangle checkBoxRect = new Rectangle(checkBoxX, checkBoxY, checkBoxSize, checkBoxSize);
+        
+        // 绘制单选框边框
+        using var checkBoxPen = new Pen(_colors.TitleBarFg, 1);
+        g.DrawEllipse(checkBoxPen, checkBoxRect);
+        
+        // 绘制单选框内部（选中时）
+        if (_rightClickMenuEnabled)
+        {
+            int innerCircleSize = 8;
+            int innerCircleX = checkBoxX + (checkBoxSize - innerCircleSize) / 2;
+            int innerCircleY = checkBoxY + (checkBoxSize - innerCircleSize) / 2;
+            using var checkBoxInnerBrush = new SolidBrush(_colors.TitleBarFg);
+            g.FillEllipse(checkBoxInnerBrush, innerCircleX, innerCircleY, innerCircleSize, innerCircleSize);
+        }
+        
+        // 绘制文本
+        using var rightClickMenuFont = new Font("Microsoft YaHei UI", 9F);
+        using var rightClickMenuFgBrush = new SolidBrush(_colors.TitleBarFg);
+        string rightClickMenuLabel = "添加到右键菜单";
+        var rightClickMenuLabelSize = g.MeasureString(rightClickMenuLabel, rightClickMenuFont);
+        g.DrawString(rightClickMenuLabel, rightClickMenuFont, rightClickMenuFgBrush,
+            checkBoxX + checkBoxSize + 8,
+            _btnRightClickMenu.Top + (_btnRightClickMenu.Height - rightClickMenuLabelSize.Height) / 2);
+
         // 重置偏移按钮（仅在有偏移时显示）
-        btnX += 28 + 2;
+        btnX += rightClickMenuBtnW + 2;
         bool hasAnyOffset = _imageCount > 0 && _manualOffsets.Any(o => o.X != 0 || o.Y != 0);
         if (hasAnyOffset)
         {
@@ -1294,6 +1374,24 @@ public partial class Form1 : Form
                 this.Invalidate();
                 return;
             }
+            // 右键菜单单选框
+            if (_btnRightClickMenu.Contains(e.Location))
+            {
+                _rightClickMenuEnabled = !_rightClickMenuEnabled;
+                SaveRightClickMenuSetting();
+                
+                if (_rightClickMenuEnabled)
+                {
+                    InstallRightClickMenu();
+                }
+                else
+                {
+                    UninstallRightClickMenu();
+                }
+                
+                this.Invalidate();
+                return;
+            }
             // 重置偏移按钮
             if (!_btnReset.IsEmpty && _btnReset.Contains(e.Location))
             {
@@ -1546,10 +1644,12 @@ public partial class Form1 : Form
             bool newHoverReset = !_btnReset.IsEmpty && _btnReset.Contains(e.Location);
             bool newHoverSyncZoom = _btnSyncZoom.Contains(e.Location);
             bool newHoverZoomHelp = _btnZoomHelp.Contains(e.Location);
+            bool newHoverRightClickMenu = _btnRightClickMenu.Contains(e.Location);
 
             if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
                 newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme ||
-                newHoverReset != _hoverReset || newHoverSyncZoom != _hoverSyncZoom || newHoverZoomHelp != _hoverZoomHelp)
+                newHoverReset != _hoverReset || newHoverSyncZoom != _hoverSyncZoom || newHoverZoomHelp != _hoverZoomHelp ||
+                newHoverRightClickMenu != _hoverRightClickMenu)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
@@ -1560,6 +1660,7 @@ public partial class Form1 : Form
                 _hoverReset = newHoverReset;
                 _hoverSyncZoom = newHoverSyncZoom;
                 _hoverZoomHelp = newHoverZoomHelp;
+                _hoverRightClickMenu = newHoverRightClickMenu;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
             }
             return;
@@ -1724,6 +1825,77 @@ public partial class Form1 : Form
             this.WindowState = FormWindowState.Maximized;
             _isWindowMaximized = true;
         }
+    }
+
+    // 右键菜单注册表路径（HKCU 不需要管理员权限）
+    private const string RightClickMenuRegPath = @"Software\Classes\SystemFileAssociations\image\shell\ComparePhotos";
+
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
+    private void InstallRightClickMenu()
+    {
+        try
+        {
+            string exePath = Application.ExecutablePath;
+            string? icoPath = FindIconPath();
+
+            // 删除旧项（如果存在）
+            using (var baseKey = Microsoft.Win32.Registry.CurrentUser)
+            {
+                if (baseKey.OpenSubKey(RightClickMenuRegPath) != null)
+                    baseKey.DeleteSubKeyTree(RightClickMenuRegPath);
+            }
+
+            // 创建注册表项
+            using (var regKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RightClickMenuRegPath))
+            {
+                regKey.SetValue("MUIVerb", "对比图片");
+                regKey.SetValue("MultiSelectModel", "Player");
+                regKey.SetValue("Icon", icoPath ?? $"{exePath},0");
+            }
+
+            // 创建 command 子项
+            using (var cmdKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RightClickMenuRegPath + @"\command"))
+            {
+                cmdKey.SetValue("", $"\"{exePath}\" \"%1\"");
+            }
+
+            // 刷新 Shell 缓存，使右键菜单立即生效
+            SHChangeNotify(0x08000000, 0x1000, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch { }
+    }
+
+    private void UninstallRightClickMenu()
+    {
+        try
+        {
+            using (var baseKey = Microsoft.Win32.Registry.CurrentUser)
+            {
+                if (baseKey.OpenSubKey(RightClickMenuRegPath) != null)
+                    baseKey.DeleteSubKeyTree(RightClickMenuRegPath);
+            }
+
+            // 刷新 Shell 缓存
+            SHChangeNotify(0x08000000, 0x1000, IntPtr.Zero, IntPtr.Zero);
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// 查找 app.ico 图标文件（与 exe 同目录或上级目录）
+    /// </summary>
+    private static string? FindIconPath()
+    {
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        // 检查 exe 同目录
+        string icoPath = Path.Combine(baseDir, "app.ico");
+        if (File.Exists(icoPath)) return icoPath;
+        // 检查上级目录
+        icoPath = Path.Combine(baseDir, "..", "..", "app.ico");
+        if (File.Exists(icoPath)) return Path.GetFullPath(icoPath);
+        return null;
     }
 
     protected override void OnResize(EventArgs e)
