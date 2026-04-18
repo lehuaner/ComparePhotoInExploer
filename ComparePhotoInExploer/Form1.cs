@@ -84,6 +84,18 @@ public partial class Form1 : Form
     {
         InitializeComponent();
 
+        // 设置全局引用，供 IPC 调用
+        Program.Form1 = this;
+        Program.Form1ReadyEvent.Set(); // 通知 IPC 线程主窗体已就绪
+        this.FormClosed += (s, e) => Program.Form1 = null;
+
+        // 设置窗口图标（任务栏和标题栏）- 从exe自身提取嵌入图标
+        try
+        {
+            this.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? null!;
+        }
+        catch { }
+
         // 初始化重置偏移覆盖层
         _resetOverlay = new ResetOverlayHelper(this);
 
@@ -444,6 +456,45 @@ public partial class Form1 : Form
         
         this.Text = "图片对比";
         this.Invalidate();
+    }
+
+    /// <summary>
+    /// 从外部（IPC / 右键菜单后续实例）添加图片
+    /// 将新图片与当前图片合并后重新加载
+    /// </summary>
+    public void AddImagesFromExternal(string[] newPaths)
+    {
+        if (newPaths == null || newPaths.Length == 0) return;
+
+        // 过滤有效路径
+        var validNew = newPaths.Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p)).ToArray();
+        if (validNew.Length == 0) return;
+
+        // 与当前图片合并（去重）
+        var existing = _imagePaths ?? Array.Empty<string>();
+        var combined = existing.Concat(validNew).Distinct().Take(9).ToArray();
+
+        // 如果有新图片被添加，重新加载
+        if (combined.Length > existing.Length)
+        {
+            LoadNewGroup(combined);
+            SaveCurrentToHistory();
+        }
+        else
+        {
+            // 图片没变化，将窗口提到前台
+            ActivateWindow();
+        }
+    }
+
+    /// <summary>
+    /// 将窗口激活到前台
+    /// </summary>
+    private void ActivateWindow()
+    {
+        if (this.WindowState == FormWindowState.Minimized)
+            this.WindowState = FormWindowState.Normal;
+        this.Activate();
     }
 
     /// <summary>
