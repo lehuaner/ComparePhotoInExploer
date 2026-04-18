@@ -119,8 +119,11 @@ public partial class Form1 : Form
             SaveCurrentToHistory();
     }
 
+    private const int WM_SYSCOMMAND = 0x0112;
+    private const int SC_CLOSE = 0xF060;
+
     /// <summary>
-    /// 重写以接收系统主题变化消息
+    /// 重写以接收系统主题变化消息，以及处理模态对话框期间的任务栏关闭请求
     /// </summary>
     protected override void WndProc(ref Message m)
     {
@@ -129,6 +132,16 @@ public partial class Form1 : Form
             // 系统主题变了，重新应用
             ApplyTheme(AppTheme.System);
             this.Invalidate();
+        }
+        // 当窗口被模态对话框禁用时，任务栏右键"关闭"发送的WM_SYSCOMMAND SC_CLOSE会被忽略
+        // 直接关闭整个程序
+        if (m.Msg == WM_SYSCOMMAND && (int)m.WParam == SC_CLOSE)
+        {
+            if (this.OwnedForms.Length > 0)
+            {
+                this.Close();
+                return;
+            }
         }
         base.WndProc(ref m);
     }
@@ -618,7 +631,7 @@ public partial class Form1 : Form
             // 偏移重置覆盖层
             if (_resetOverlay.IsVisible && _imageCount > 0)
             {
-                _resetOverlay.Draw(e.Graphics, _imageCount, _images, _manualOffsets, _imagePaths, _colors);
+                _resetOverlay.Draw(e.Graphics, _imageCount, _images, _manualOffsets, _imagePaths, _colors, _cols, _rows);
             }
 
             // 历史记录覆盖层（浮在图片区域上方）
@@ -928,7 +941,10 @@ public partial class Form1 : Form
             {
                 _showHelp = !_showHelp;
                 if (_showHelp)
+                {
                     _historyBarData.Collapse(); // 关闭历史记录
+                    _resetOverlay.Hide(); // 关闭重置偏移
+                }
                 this.Invalidate();
                 return;
             }
@@ -936,6 +952,7 @@ public partial class Form1 : Form
             if (_btnHistory.Contains(e.Location))
             {
                 _showHelp = false; // 关闭按键说明
+                _resetOverlay.Hide(); // 关闭重置偏移
                 _historyBarData.ToggleCollapse();
                 this.Invalidate();
                 return;
@@ -1011,7 +1028,7 @@ public partial class Form1 : Form
         }
 
         // 重置偏移模式：如果点击在面板外，自动关闭并跳过本次操作
-        if (_resetOverlay.IsVisible && !_resetOverlay.IsInOverlayArea(e.Location, _imageCount))
+        if (_resetOverlay.IsVisible && !_resetOverlay.IsInOverlayArea(e.Location, _imageCount, _cols, _rows))
         {
             _resetOverlay.Hide();
             this.Invalidate();
@@ -1023,40 +1040,66 @@ public partial class Form1 : Form
         {
             if (e.Button == MouseButtons.Left)
             {
-                // 点击全部重置按钮
+                // 点击重置按钮（根据选中状态决定功能）
                 if (_resetOverlay.BatchResetButton.Contains(e.Location))
                 {
-                    // 收集所有有偏移的图片索引
-                    var offsetIndices = new List<int>();
-                    for (int i = 0; i < _imageCount; i++)
+                    if (_resetOverlay.SelectedCells.Count > 0)
                     {
-                        if (_manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0)
-                            offsetIndices.Add(i);
-                    }
-                    if (offsetIndices.Count > 0)
-                    {
-                        var names = string.Join(", ", offsetIndices.Select(i => Path.GetFileName(_imagePaths[i])));
+                        // 有选中图片 → 重置选中
+                        var names = string.Join(", ", _resetOverlay.SelectedCells.Select(i => Path.GetFileName(_imagePaths[i])));
                         var result = ThemedMessageBox.Show(this,
-                            $"确定重置以下 {offsetIndices.Count} 张图片的偏移？\n\n{names}",
-                            "全部重置偏移", MessageBoxButtons.YesNo, _colors);
+                            $"确定重置以下 {_resetOverlay.SelectedCells.Count} 张图片的偏移？\n\n{names}",
+                            "重置选中偏移", MessageBoxButtons.YesNo, _colors);
                         if (result == DialogResult.Yes)
                         {
-                            foreach (int idx in offsetIndices)
+                            foreach (int idx in _resetOverlay.SelectedCells)
                             {
                                 _offsets[idx] = new PointF(
                                     _offsets[idx].X - _manualOffsets[idx].X,
                                     _offsets[idx].Y - _manualOffsets[idx].Y);
                                 _manualOffsets[idx] = new PointF(0, 0);
                             }
-                            _resetOverlay.Hide();
+                            if (!_manualOffsets.Any(o => o.X != 0 || o.Y != 0))
+                                _resetOverlay.Hide();
+                            else
+                                _resetOverlay.SelectedCells.Clear();
                             this.Invalidate();
+                        }
+                    }
+                    else
+                    {
+                        // 无选中图片 → 全部重置
+                        var offsetIndices = new List<int>();
+                        for (int i = 0; i < _imageCount; i++)
+                        {
+                            if (_manualOffsets[i].X != 0 || _manualOffsets[i].Y != 0)
+                                offsetIndices.Add(i);
+                        }
+                        if (offsetIndices.Count > 0)
+                        {
+                            var names = string.Join(", ", offsetIndices.Select(i => Path.GetFileName(_imagePaths[i])));
+                            var result = ThemedMessageBox.Show(this,
+                                $"确定重置以下 {offsetIndices.Count} 张图片的偏移？\n\n{names}",
+                                "全部重置偏移", MessageBoxButtons.YesNo, _colors);
+                            if (result == DialogResult.Yes)
+                            {
+                                foreach (int idx in offsetIndices)
+                                {
+                                    _offsets[idx] = new PointF(
+                                        _offsets[idx].X - _manualOffsets[idx].X,
+                                        _offsets[idx].Y - _manualOffsets[idx].Y);
+                                    _manualOffsets[idx] = new PointF(0, 0);
+                                }
+                                _resetOverlay.Hide();
+                                this.Invalidate();
+                            }
                         }
                     }
                     return;
                 }
 
                 // 点击缩略图选中/取消选中
-                int hitIdx = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets);
+                int hitIdx = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets, _cols, _rows);
                 if (hitIdx >= 0)
                 {
                     // 切换选中（普通点击也切换）
@@ -1075,24 +1118,27 @@ public partial class Form1 : Form
 
                 // 点击空白处：取消选择，并开始框选
                 _resetOverlay.SelectedCells.Clear();
-                _resetOverlay.IsSelecting = true;
-                _resetOverlay.SelectStart = e.Location;
-                _resetOverlay.SelectEnd = e.Location;
-                _resetOverlay.LastSelectRect = Rectangle.Empty;
+                _resetOverlay.StartSelection(e.Location);
                 this.Invalidate();
             }
             else if (e.Button == MouseButtons.Right)
             {
-                // 右键重置选中的图片
-                if (_resetOverlay.SelectedCells.Count > 0)
+                // 右键点击图片重置
+                int hitIdx = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets, _cols, _rows);
+                if (hitIdx >= 0)
                 {
-                    var names = string.Join(", ", _resetOverlay.SelectedCells.Select(i => Path.GetFileName(_imagePaths[i])));
+                    // 如果右键点中的图片已在选中列表中，则批量重置所有选中图片
+                    var toReset = _resetOverlay.SelectedCells.Contains(hitIdx)
+                        ? _resetOverlay.SelectedCells.ToList()
+                        : new List<int> { hitIdx };
+
+                    var names = string.Join(", ", toReset.Select(i => Path.GetFileName(_imagePaths[i])));
                     var result = ThemedMessageBox.Show(this,
-                        $"确定重置以下 {_resetOverlay.SelectedCells.Count} 张图片的偏移？\n\n{names}",
+                        $"确定重置以下 {toReset.Count} 张图片的偏移？\n\n{names}",
                         "重置偏移", MessageBoxButtons.YesNo, _colors);
                     if (result == DialogResult.Yes)
                     {
-                        foreach (int idx in _resetOverlay.SelectedCells)
+                        foreach (int idx in toReset)
                         {
                             _offsets[idx] = new PointF(
                                 _offsets[idx].X - _manualOffsets[idx].X,
@@ -1102,7 +1148,10 @@ public partial class Form1 : Form
                         if (!_manualOffsets.Any(o => o.X != 0 || o.Y != 0))
                             _resetOverlay.Hide();
                         else
-                            _resetOverlay.SelectedCells.Clear();
+                        {
+                            foreach (int idx in toReset)
+                                _resetOverlay.SelectedCells.Remove(idx);
+                        }
                         this.Invalidate();
                     }
                 }
@@ -1175,36 +1224,15 @@ public partial class Form1 : Form
         // 重置偏移模式悬停和框选
         if (_resetOverlay.IsVisible)
         {
-            // 框选拖动
+            // 框选拖动 — 实时更新选中状态并重绘
             if (_resetOverlay.IsSelecting)
             {
-                // 清除旧框选矩形
-                if (!_resetOverlay.LastSelectRect.IsEmpty)
-                    ControlPaint.DrawReversibleFrame(_resetOverlay.LastSelectRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
-
-                _resetOverlay.SelectEnd = e.Location;
-
-                // 绘制新框选矩形
-                int selX = Math.Min(_resetOverlay.SelectStart.X, _resetOverlay.SelectEnd.X);
-                int selY = Math.Min(_resetOverlay.SelectStart.Y, _resetOverlay.SelectEnd.Y);
-                int selW = Math.Abs(_resetOverlay.SelectEnd.X - _resetOverlay.SelectStart.X);
-                int selH = Math.Abs(_resetOverlay.SelectEnd.Y - _resetOverlay.SelectStart.Y);
-                if (selW > 2 && selH > 2)
-                {
-                    var screenRect = this.RectangleToScreen(new Rectangle(selX, selY, selW, selH));
-                    ControlPaint.DrawReversibleFrame(screenRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
-                    _resetOverlay.LastSelectRect = screenRect;
-                }
-                else
-                {
-                    _resetOverlay.LastSelectRect = Rectangle.Empty;
-                }
-
-                // 仅在鼠标释放时计算选中（避免每帧创建HashSet和Invalidate）
+                _resetOverlay.UpdateSelection(e.Location, _imageCount, _manualOffsets, _cols, _rows);
+                this.Invalidate();
                 return;
             }
 
-            int newHoverCell = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets);
+            int newHoverCell = _resetOverlay.HitTestCell(e.Location, _imageCount, _manualOffsets, _cols, _rows);
             if (newHoverCell != _resetOverlay.HoverCell)
             {
                 _resetOverlay.HoverCell = newHoverCell;
@@ -1246,21 +1274,7 @@ public partial class Form1 : Form
         _shiftDragIndex = -1;
         if (_resetOverlay.IsSelecting)
         {
-            _resetOverlay.IsSelecting = false;
-            // 清除框选矩形
-            if (!_resetOverlay.LastSelectRect.IsEmpty)
-            {
-                ControlPaint.DrawReversibleFrame(_resetOverlay.LastSelectRect, Color.FromArgb(100, 149, 237), FrameStyle.Dashed);
-                _resetOverlay.LastSelectRect = Rectangle.Empty;
-            }
-            // 框选结束后计算选中结果
-            var newSelection = _resetOverlay.GetCellsInSelection(_resetOverlay.SelectStart, _resetOverlay.SelectEnd, _imageCount, _manualOffsets);
-            if (newSelection.Count > 0)
-            {
-                _resetOverlay.SelectedCells.Clear();
-                foreach (var idx in newSelection)
-                    _resetOverlay.SelectedCells.Add(idx);
-            }
+            _resetOverlay.EndSelection();
             this.Invalidate();
         }
     }

@@ -14,7 +14,6 @@ public class ResetOverlayHelper
     public bool IsSelecting { get; set; } = false;
     public Point SelectStart { get; set; }
     public Point SelectEnd { get; set; }
-    public Rectangle LastSelectRect { get; set; } = Rectangle.Empty;
     public Rectangle BatchResetButton { get; set; } = Rectangle.Empty;
 
     // 布局参数
@@ -26,22 +25,25 @@ public class ResetOverlayHelper
     private const int BatchBtnH = 28;
     private const int HintH = 18;
 
+    // 框选前的选中状态（用于框选过程中的实时预览）
+    private HashSet<int> _preSelectCells = new();
+
     public ResetOverlayHelper(Form1 form)
     {
         _form = form;
     }
 
     /// <summary>
-    /// 获取当前布局参数（供外部使用）
+    /// 获取当前布局参数（使用主操作界面的列数/行数保持一致）
     /// </summary>
-    public ResetOverlayLayout GetLayout(int imageCount, int availW, int topOffset)
+    public ResetOverlayLayout GetLayout(int imageCount, int availW, int topOffset, int mainCols, int mainRows)
     {
         int cellW = ThumbSize + CellPad * 2;
         int cellH = ThumbSize + CellPad * 2;
 
-        int maxCols = Math.Max(1, (availW - GroupPadding * 2) / (cellW + CellGap));
-        int cols = Math.Min(maxCols, imageCount);
-        int rows = (imageCount + cols - 1) / cols;
+        // 使用主界面的列数和行数
+        int cols = mainCols;
+        int rows = mainRows;
 
         int gridW = cols * cellW + (cols - 1) * CellGap;
         int gridH = rows * cellH + (rows - 1) * CellGap;
@@ -70,16 +72,14 @@ public class ResetOverlayHelper
     /// <summary>
     /// 绘制重置偏移覆盖层
     /// </summary>
-    public void Draw(Graphics g, int imageCount, Image?[] images, PointF[] manualOffsets, string[] imagePaths, ThemeColorSet colors)
+    public void Draw(Graphics g, int imageCount, Image?[] images, PointF[] manualOffsets, string[] imagePaths, ThemeColorSet colors, int mainCols, int mainRows)
     {
         if (imageCount == 0) return;
 
         int topOffset = Form1.TitleBarHeight;
         int availW = _form.ClientSize.Width;
 
-        var layout = GetLayout(imageCount, availW, topOffset);
-        var imagesRef = images;
-        var offsetsRef = manualOffsets;
+        var layout = GetLayout(imageCount, availW, topOffset, mainCols, mainRows);
 
         // 半透明背景
         using var bgBrush = new SolidBrush(colors.HistoryOverlayBg);
@@ -90,7 +90,7 @@ public class ResetOverlayHelper
         g.DrawLine(bottomPen, 0, topOffset + layout.TotalHeight - 1, availW, topOffset + layout.TotalHeight - 1);
 
         // 绘制每张缩略图
-        for (int i = 0; i < imageCount; i++)
+        for (int i = 0; i < layout.Cols * layout.Rows; i++)
         {
             int col = i % layout.Cols;
             int row = i / layout.Cols;
@@ -98,8 +98,9 @@ public class ResetOverlayHelper
             int cy = layout.GridStartY + row * (layout.CellH + CellGap);
             var cellRect = new Rectangle(cx, cy, layout.CellW, layout.CellH);
 
-            bool hasOffset = offsetsRef[i].X != 0 || offsetsRef[i].Y != 0;
-            bool isSelected = SelectedCells.Contains(i);
+            bool hasImage = i < imageCount;
+            bool hasOffset = hasImage && (manualOffsets[i].X != 0 || manualOffsets[i].Y != 0);
+            bool isSelected = hasImage && SelectedCells.Contains(i);
             bool isHover = i == HoverCell;
 
             // 格子背景和边框
@@ -125,19 +126,25 @@ public class ResetOverlayHelper
                     g.DrawRectangle(borderPen, cellRect);
                 }
             }
-            else
+            else if (hasImage)
             {
                 // 无偏移的图：淡化显示，不可交互
                 using var borderPen = new Pen(Color.FromArgb(60, colors.HistoryBorder), 1);
                 g.DrawRectangle(borderPen, cellRect);
             }
+            else
+            {
+                // 空格子（图片数量不足以填满网格时）
+                using var borderPen = new Pen(Color.FromArgb(40, colors.HistoryBorder), 1);
+                g.DrawRectangle(borderPen, cellRect);
+            }
 
             // 绘制缩略图
-            int tx = cx + CellPad;
-            int ty = cy + CellPad;
-            if (imagesRef[i] != null)
+            if (hasImage && images[i] != null)
             {
-                g.DrawImage(imagesRef[i]!, tx, ty, ThumbSize, ThumbSize);
+                int tx = cx + CellPad;
+                int ty = cy + CellPad;
+                g.DrawImage(images[i]!, tx, ty, ThumbSize, ThumbSize);
                 if (!hasOffset)
                 {
                     // 无偏移图淡化 — 用半透明覆盖
@@ -154,11 +161,28 @@ public class ResetOverlayHelper
             }
         }
 
-        // 全部重置按钮 — 居中在网格下方
+        // 框选范围矩形
+        if (IsSelecting)
+        {
+            int selX = Math.Min(SelectStart.X, SelectEnd.X);
+            int selY = Math.Min(SelectStart.Y, SelectEnd.Y);
+            int selW = Math.Abs(SelectEnd.X - SelectStart.X);
+            int selH = Math.Abs(SelectEnd.Y - SelectStart.Y);
+            if (selW > 2 && selH > 2)
+            {
+                var selRect = new Rectangle(selX, selY, selW, selH);
+                using var selFillBrush = new SolidBrush(Color.FromArgb(40, 100, 149, 237));
+                g.FillRectangle(selFillBrush, selRect);
+                using var selBorderPen = new Pen(Color.FromArgb(100, 149, 237), 1) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawRectangle(selBorderPen, selRect);
+            }
+        }
+
+        // 重置按钮 — 居中在网格下方（根据选中状态切换文字和功能）
         int btnY = layout.GridStartY + layout.GridH + CellGap;
         var batchBtnRect = new Rectangle((availW - BatchBtnW) / 2, btnY, BatchBtnW, BatchBtnH);
 
-        bool hasAnyOffset = offsetsRef.Any(o => o.X != 0 || o.Y != 0);
+        bool hasAnyOffset = manualOffsets.Any(o => o.X != 0 || o.Y != 0);
         Color batchBg = hasAnyOffset ? colors.DialogBtnActiveBg : colors.DialogBtnBg;
         Color batchFg = hasAnyOffset ? Color.White : colors.DialogBtnFg;
         using (var batchBgBrush = new SolidBrush(batchBg))
@@ -167,7 +191,8 @@ public class ResetOverlayHelper
         g.DrawRectangle(batchBorderPen, batchBtnRect);
         using var batchFont = new Font("Microsoft YaHei UI", 9F);
         using var batchFgBrush = new SolidBrush(batchFg);
-        var batchLabel = "全部重置";
+        // 有选中图片时显示"重置选中"，否则显示"全部重置"
+        string batchLabel = SelectedCells.Count > 0 ? "重置选中" : "全部重置";
         var batchLabelSize = g.MeasureString(batchLabel, batchFont);
         g.DrawString(batchLabel, batchFont, batchFgBrush,
             batchBtnRect.Left + (batchBtnRect.Width - batchLabelSize.Width) / 2,
@@ -177,7 +202,7 @@ public class ResetOverlayHelper
         // 操作说明
         using var hintFont = new Font("Microsoft YaHei UI", 8F);
         using var hintFg = new SolidBrush(colors.ResetPanelSubFg);
-        string hintText = "左键选中/取消 | 右键重置选中 | 框选多选 | Esc关闭";
+        string hintText = "左键选中/取消 | Ctrl+点击或框选多选 | 右键重置 | Esc关闭";
         var hintTextSize = g.MeasureString(hintText, hintFont);
         g.DrawString(hintText, hintFont, hintFg,
             (availW - hintTextSize.Width) / 2,
@@ -187,13 +212,13 @@ public class ResetOverlayHelper
     /// <summary>
     /// 检测鼠标是否在重置偏移面板区域内
     /// </summary>
-    public bool IsInOverlayArea(Point mousePos, int imageCount)
+    public bool IsInOverlayArea(Point mousePos, int imageCount, int mainCols, int mainRows)
     {
         if (!IsVisible || imageCount == 0) return false;
 
         int topOffset = Form1.TitleBarHeight;
         int availW = _form.ClientSize.Width;
-        var layout = GetLayout(imageCount, availW, topOffset);
+        var layout = GetLayout(imageCount, availW, topOffset, mainCols, mainRows);
 
         return mousePos.Y >= topOffset && mousePos.Y < topOffset + layout.TotalHeight;
     }
@@ -201,11 +226,11 @@ public class ResetOverlayHelper
     /// <summary>
     /// 检测鼠标是否在重置面板的某个缩略图上（仅有偏移的图片可选中）
     /// </summary>
-    public int HitTestCell(Point mousePos, int imageCount, PointF[] manualOffsets)
+    public int HitTestCell(Point mousePos, int imageCount, PointF[] manualOffsets, int mainCols, int mainRows)
     {
         int topOffset = Form1.TitleBarHeight;
         int availW = _form.ClientSize.Width;
-        var layout = GetLayout(imageCount, availW, topOffset);
+        var layout = GetLayout(imageCount, availW, topOffset, mainCols, mainRows);
 
         for (int i = 0; i < imageCount; i++)
         {
@@ -228,7 +253,7 @@ public class ResetOverlayHelper
     /// <summary>
     /// 获取框选范围内命中的缩略图索引集合（仅有偏移的图片可选中）
     /// </summary>
-    public HashSet<int> GetCellsInSelection(Point start, Point end, int imageCount, PointF[] manualOffsets)
+    public HashSet<int> GetCellsInSelection(Point start, Point end, int imageCount, PointF[] manualOffsets, int mainCols, int mainRows)
     {
         var result = new HashSet<int>();
         int selX = Math.Min(start.X, end.X);
@@ -239,7 +264,7 @@ public class ResetOverlayHelper
 
         int topOffset = Form1.TitleBarHeight;
         int availW = _form.ClientSize.Width;
-        var layout = GetLayout(imageCount, availW, topOffset);
+        var layout = GetLayout(imageCount, availW, topOffset, mainCols, mainRows);
 
         for (int i = 0; i < imageCount; i++)
         {
@@ -258,6 +283,49 @@ public class ResetOverlayHelper
     }
 
     /// <summary>
+    /// 开始框选，保存当前选中状态
+    /// </summary>
+    public void StartSelection(Point start)
+    {
+        IsSelecting = true;
+        SelectStart = start;
+        SelectEnd = start;
+        _preSelectCells = new HashSet<int>(SelectedCells);
+    }
+
+    /// <summary>
+    /// 更新框选终点并实时计算选中状态
+    /// </summary>
+    public void UpdateSelection(Point end, int imageCount, PointF[] manualOffsets, int mainCols, int mainRows)
+    {
+        SelectEnd = end;
+
+        // 实时计算框选命中项
+        int selW = Math.Abs(SelectEnd.X - SelectStart.X);
+        int selH = Math.Abs(SelectEnd.Y - SelectStart.Y);
+
+        SelectedCells.Clear();
+        foreach (var idx in _preSelectCells)
+            SelectedCells.Add(idx);
+
+        if (selW > 2 && selH > 2)
+        {
+            var hitCells = GetCellsInSelection(SelectStart, SelectEnd, imageCount, manualOffsets, mainCols, mainRows);
+            foreach (var idx in hitCells)
+                SelectedCells.Add(idx);
+        }
+    }
+
+    /// <summary>
+    /// 结束框选
+    /// </summary>
+    public void EndSelection()
+    {
+        IsSelecting = false;
+        _preSelectCells.Clear();
+    }
+
+    /// <summary>
     /// 隐藏重置偏移界面并清除状态
     /// </summary>
     public void Hide()
@@ -266,7 +334,7 @@ public class ResetOverlayHelper
         SelectedCells.Clear();
         HoverCell = -1;
         IsSelecting = false;
-        LastSelectRect = Rectangle.Empty;
+        _preSelectCells.Clear();
     }
 }
 
