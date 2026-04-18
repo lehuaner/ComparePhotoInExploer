@@ -7,7 +7,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>app.ico</ApplicationIcon>
-    <Version>Version.1.1</Version>
+    <Version>Version.1.3</Version>
   </PropertyGroup>
 
   <ItemGroup>
