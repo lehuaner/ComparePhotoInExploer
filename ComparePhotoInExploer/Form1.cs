@@ -31,10 +31,12 @@ public partial class Form1 : Form
 
     // 自绘标题栏
     public const int TitleBarHeight = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
+    private bool _showZoomHelp = false; // 是否显示缩放说明
+    private bool _syncZoomPosition = true; // 缩放时是否将被动图片对齐到主动图片鼠标所指位置
     private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
     // 拖放
@@ -47,6 +49,31 @@ public partial class Form1 : Form
     private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
     private const int WM_NCLBUTTONDOWN = 0xA1;
     private const int HTCAPTION = 2;
+
+    // Win32 圆角窗口
+    [DllImport("user32.dll")]
+    private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
+    [DllImport("gdi32.dll")]
+    private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
+    [DllImport("gdi32.dll")]
+    private static extern int DeleteObject(IntPtr hObject);
+
+    private const int CornerRadius = 12;
+
+    private void ApplyRoundCorner()
+    {
+        if (_isWindowMaximized)
+        {
+            // 最大化时移除圆角
+            SetWindowRgn(this.Handle, IntPtr.Zero, true);
+        }
+        else
+        {
+            var rgn = CreateRoundRectRgn(0, 0, this.Width + 1, this.Height + 1, CornerRadius, CornerRadius);
+            SetWindowRgn(this.Handle, rgn, true);
+            // SetWindowRgn 会接管 hRgn 的所有权，不需要 DeleteObject
+        }
+    }
 
     // Win32 监听系统主题变化
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
@@ -87,6 +114,9 @@ public partial class Form1 : Form
         this.DoubleBuffered = true;
         this.StartPosition = FormStartPosition.CenterScreen;
         this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
+
+        // 圆角边框
+        this.Load += (s, e) => ApplyRoundCorner();
 
         // 允许拖放
         this.AllowDrop = true;
@@ -556,9 +586,10 @@ public partial class Form1 : Form
                 _resetOverlay.Hide();
                 this.Invalidate();
             }
-            else if (_showHelp)
+            else if (_showHelp || _showZoomHelp)
             {
                 _showHelp = false;
+                _showZoomHelp = false;
                 this.Invalidate();
             }
             else if (!_historyBarData.IsCollapsed)
@@ -578,9 +609,12 @@ public partial class Form1 : Form
     {
         try
         {
-            // 历史记录和按键说明互斥
+            // 历史记录和按键说明/缩放说明互斥
             if (!_historyBarData.IsCollapsed)
+            {
                 _showHelp = false;
+                _showZoomHelp = false;
+            }
 
             EnsureCheckerBrush();
 
@@ -644,6 +678,30 @@ public partial class Form1 : Form
             if (_showHelp)
             {
                 DrawHelpPanel(e.Graphics);
+            }
+
+            // 缩放说明（由标题栏按钮触发，与历史记录互斥）
+            if (_showZoomHelp)
+            {
+                DrawZoomHelpPanel(e.Graphics);
+            }
+
+            // 绘制窗口边框（圆角，适配主题）
+            if (!_isWindowMaximized)
+            {
+                float r = CornerRadius;
+                float w = this.ClientSize.Width - 1;
+                float h = this.ClientSize.Height - 1;
+                using var borderPen = new Pen(_colors.WindowBorderColor, 1);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using var borderPath = new System.Drawing.Drawing2D.GraphicsPath();
+                borderPath.AddArc(0.5f, 0.5f, r, r, 180, 90);
+                borderPath.AddArc(w - r, 0.5f, r, r, 270, 90);
+                borderPath.AddArc(w - r, h - r, r, r, 0, 90);
+                borderPath.AddArc(0.5f, h - r, r, r, 90, 90);
+                borderPath.CloseFigure();
+                e.Graphics.DrawPath(borderPen, borderPath);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.Default;
             }
         }
         catch (Exception ex)
@@ -756,8 +814,38 @@ public partial class Form1 : Form
             _btnTheme.Left + (_btnTheme.Width - themeLabelSize.Width) / 2,
             _btnTheme.Top + (_btnTheme.Height - themeLabelSize.Height) / 2);
 
-        // 重置偏移按钮（仅在有偏移时显示）
+        // 同步缩放位置按钮
         btnX += themeBtnW + 2;
+        int syncZoomBtnW = 80;
+        _btnSyncZoom = new Rectangle(btnX, 0, syncZoomBtnW, TitleBarHeight);
+        Color syncZoomBg = _syncZoomPosition ? _colors.TitleBarBtnActiveBg :
+                           _hoverSyncZoom ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var syncZoomBgBrush = new SolidBrush(syncZoomBg))
+            g.FillRectangle(syncZoomBgBrush, _btnSyncZoom);
+        using var syncZoomFont = new Font("Microsoft YaHei UI", 9F);
+        using var syncZoomFgBrush = new SolidBrush(_colors.TitleBarFg);
+        string syncZoomLabel = _syncZoomPosition ? "同步对齐" : "独立缩放";
+        var syncZoomLabelSize = g.MeasureString(syncZoomLabel, syncZoomFont);
+        g.DrawString(syncZoomLabel, syncZoomFont, syncZoomFgBrush,
+            _btnSyncZoom.Left + (_btnSyncZoom.Width - syncZoomLabelSize.Width) / 2,
+            _btnSyncZoom.Top + (_btnSyncZoom.Height - syncZoomLabelSize.Height) / 2);
+
+        // 缩放说明按钮（小问号）
+        btnX += syncZoomBtnW + 1;
+        _btnZoomHelp = new Rectangle(btnX, 0, 28, TitleBarHeight);
+        Color zoomHelpBg = _showZoomHelp ? _colors.TitleBarBtnActiveBg :
+                           _hoverZoomHelp ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var zoomHelpBgBrush = new SolidBrush(zoomHelpBg))
+            g.FillRectangle(zoomHelpBgBrush, _btnZoomHelp);
+        using var zoomHelpFont = new Font("Microsoft YaHei UI", 9F);
+        using var zoomHelpFgBrush = new SolidBrush(_colors.TitleBarFg);
+        var zoomHelpLabelSize = g.MeasureString("?", zoomHelpFont);
+        g.DrawString("?", zoomHelpFont, zoomHelpFgBrush,
+            _btnZoomHelp.Left + (_btnZoomHelp.Width - zoomHelpLabelSize.Width) / 2,
+            _btnZoomHelp.Top + (_btnZoomHelp.Height - zoomHelpLabelSize.Height) / 2);
+
+        // 重置偏移按钮（仅在有偏移时显示）
+        btnX += 28 + 2;
         bool hasAnyOffset = _imageCount > 0 && _manualOffsets.Any(o => o.X != 0 || o.Y != 0);
         if (hasAnyOffset)
         {
@@ -837,7 +925,7 @@ public partial class Form1 : Form
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片",
             "- 拖入图片: 加载新的图片组进行对比",
-            "- Esc / Ctrl+W: 关闭当前界面或程序"
+            "- Esc / Ctrl+W: 关闭当前界面或程序",
         };
 
         float boxWidth = 380f;
@@ -857,6 +945,52 @@ public partial class Form1 : Form
                 ? new SolidBrush(_colors.HelpTitleFg)
                 : new SolidBrush(_colors.HelpTextFg);
             g.DrawString(instructions[i], i == 0 ? new Font(this.Font, FontStyle.Bold) : this.Font, brush, 12, topOffset + 10 + i * 22);
+        }
+    }
+
+    /// <summary>
+    /// 缩放说明面板
+    /// </summary>
+    private void DrawZoomHelpPanel(Graphics g)
+    {
+        string[] instructions = {
+            "缩放模式说明:",
+            "",
+            "【同步对齐】",
+            "Alt+滚轮缩放时，所有图片的同一比例位置",
+            "会移动到与鼠标所指位置相同的地方。",
+            "例如：鼠标指向主图1/4处，从图也会",
+            "将其1/4处对齐到相同位置。",
+            "",
+            "【独立缩放】",
+            "Alt+滚轮缩放时，从图以与主图相同的",
+            "比例位置为缩放中心进行缩放。",
+            "例如：主图以1/4处为缩放中心，",
+            "从图也以其自身1/4处为缩放中心，",
+            "两图缩放中心的比例位置相同，",
+            "但不会移动到鼠标屏幕位置。"
+        };
+
+        float boxWidth = 310f;
+        float boxHeight = instructions.Length * 20 + 20;
+        int topOffset = TitleBarHeight;
+        using (var bgBrush = new SolidBrush(_colors.HelpPanelBg))
+        {
+            g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
+        }
+
+        using var borderPen = new Pen(_colors.HelpPanelBorder, 1);
+        g.DrawRectangle(borderPen, 5, topOffset + 5, boxWidth, boxHeight);
+
+        using var titleFont = new Font(this.Font, FontStyle.Bold);
+        using var sectionFont = new Font(this.Font, FontStyle.Bold);
+        for (int i = 0; i < instructions.Length; i++)
+        {
+            bool isTitle = i == 0;
+            bool isSection = instructions[i].StartsWith("【");
+            using var brush = isTitle ? new SolidBrush(_colors.HelpTitleFg) : new SolidBrush(_colors.HelpTextFg);
+            var font = isTitle ? titleFont : (isSection ? sectionFont : this.Font);
+            g.DrawString(instructions[i], font, brush, 12, topOffset + 10 + i * 20);
         }
     }
 
@@ -944,6 +1078,7 @@ public partial class Form1 : Form
                 {
                     _historyBarData.Collapse(); // 关闭历史记录
                     _resetOverlay.Hide(); // 关闭重置偏移
+                    _showZoomHelp = false; // 关闭缩放说明
                 }
                 this.Invalidate();
                 return;
@@ -952,6 +1087,7 @@ public partial class Form1 : Form
             if (_btnHistory.Contains(e.Location))
             {
                 _showHelp = false; // 关闭按键说明
+                _showZoomHelp = false; // 关闭缩放说明
                 _resetOverlay.Hide(); // 关闭重置偏移
                 _historyBarData.ToggleCollapse();
                 this.Invalidate();
@@ -961,6 +1097,26 @@ public partial class Form1 : Form
             if (_btnTheme.Contains(e.Location))
             {
                 CycleTheme();
+                return;
+            }
+            // 同步缩放位置按钮
+            if (_btnSyncZoom.Contains(e.Location))
+            {
+                _syncZoomPosition = !_syncZoomPosition;
+                this.Invalidate();
+                return;
+            }
+            // 缩放说明按钮
+            if (_btnZoomHelp.Contains(e.Location))
+            {
+                _showZoomHelp = !_showZoomHelp;
+                if (_showZoomHelp)
+                {
+                    _showHelp = false;
+                    _historyBarData.Collapse();
+                    _resetOverlay.Hide();
+                }
+                this.Invalidate();
                 return;
             }
             // 重置偏移按钮
@@ -1019,10 +1175,11 @@ public partial class Form1 : Form
         }
 
         // 点击主操作区时，自动收起历史记录、操作说明
-        if (!_historyBarData.IsCollapsed || _showHelp)
+        if (!_historyBarData.IsCollapsed || _showHelp || _showZoomHelp)
         {
             _historyBarData.Collapse();
             _showHelp = false;
+            _showZoomHelp = false;
             _hoverHistoryGroup = -1;
             this.Invalidate();
         }
@@ -1190,10 +1347,12 @@ public partial class Form1 : Form
             bool newHoverHistory = _btnHistory.Contains(e.Location);
             bool newHoverTheme = _btnTheme.Contains(e.Location);
             bool newHoverReset = !_btnReset.IsEmpty && _btnReset.Contains(e.Location);
+            bool newHoverSyncZoom = _btnSyncZoom.Contains(e.Location);
+            bool newHoverZoomHelp = _btnZoomHelp.Contains(e.Location);
 
             if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
                 newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme ||
-                newHoverReset != _hoverReset)
+                newHoverReset != _hoverReset || newHoverSyncZoom != _hoverSyncZoom || newHoverZoomHelp != _hoverZoomHelp)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
@@ -1202,6 +1361,8 @@ public partial class Form1 : Form
                 _hoverHistory = newHoverHistory;
                 _hoverTheme = newHoverTheme;
                 _hoverReset = newHoverReset;
+                _hoverSyncZoom = newHoverSyncZoom;
+                _hoverZoomHelp = newHoverZoomHelp;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
             }
             return;
@@ -1291,9 +1452,10 @@ public partial class Form1 : Form
                 _resetOverlay.Hide();
                 this.Invalidate();
             }
-            else if (_showHelp)
+            else if (_showHelp || _showZoomHelp)
             {
                 _showHelp = false;
+                _showZoomHelp = false;
                 this.Invalidate();
             }
             else if (!_historyBarData.IsCollapsed)
@@ -1370,6 +1532,7 @@ public partial class Form1 : Form
     {
         base.OnResize(e);
         _isWindowMaximized = this.WindowState == FormWindowState.Maximized;
+        ApplyRoundCorner();
         UpdateBaseZoom();
         this.Invalidate();
     }
@@ -1388,10 +1551,11 @@ public partial class Form1 : Form
     private void Form1_MouseWheel(object? sender, MouseEventArgs e)
     {
         // 滚动操作主操作区时，自动收起历史记录、操作说明和重置偏移
-        if (!_historyBarData.IsCollapsed || _showHelp || _resetOverlay.IsVisible)
+        if (!_historyBarData.IsCollapsed || _showHelp || _resetOverlay.IsVisible || _showZoomHelp)
         {
             _historyBarData.Collapse();
             _showHelp = false;
+            _showZoomHelp = false;
             _resetOverlay.Hide();
             _hoverHistoryGroup = -1;
         }
@@ -1400,7 +1564,7 @@ public partial class Form1 : Form
         {
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Width * 0.05f * avgZoom;
-            float delta = e.Delta > 0 ? -step : step;
+            float delta = e.Delta > 0 ? step : -step;
             for (int i = 0; i < _imageCount; i++)
                 _offsets[i] = new PointF(_offsets[i].X + delta, _offsets[i].Y);
         }
@@ -1440,11 +1604,22 @@ public partial class Form1 : Form
 
                 Rectangle passiveRect = GetCellRect(i);
                 Size passiveImgSize = _images[i]!.Size;
+                float oldEffPassive = _baseZooms[i] * oldZoomLevel;
                 float newEffPassive = _baseZooms[i] * newZoomLevel;
 
-                PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
-                var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
-                _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
+                if (_syncZoomPosition)
+                {
+                    // 同步对齐：将被动图片的同一归一化位置移到与主动图片鼠标位置对应的地方
+                    PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
+                    var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
+                    _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
+                }
+                else
+                {
+                    // 独立缩放：被动图片以与主动图片相同比例位置为缩放中心
+                    // 即主图1/4处为缩放中心，从图也以其1/4处为缩放中心
+                    _offsets[i] = ZoomAtNormalized(norm, passiveRect, oldEffPassive, newEffPassive, _offsets[i], passiveImgSize);
+                }
             }
 
             _zoomLevel = newZoomLevel;
@@ -1453,7 +1628,7 @@ public partial class Form1 : Form
         {
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Height * 0.05f * avgZoom;
-            float delta = e.Delta > 0 ? -step : step;
+            float delta = e.Delta > 0 ? step : -step;
             for (int i = 0; i < _imageCount; i++)
                 _offsets[i] = new PointF(_offsets[i].X, _offsets[i].Y + delta);
         }

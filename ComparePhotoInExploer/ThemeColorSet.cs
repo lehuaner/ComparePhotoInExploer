@@ -56,6 +56,9 @@ public class ThemeColorSet
     public Color DialogBtnHoverBg { get; init; }
     public Color DialogBtnActiveBg { get; init; }
 
+    // 窗口边框
+    public Color WindowBorderColor { get; init; }
+
     // 重置偏移面板
     public Color ResetPanelBg { get; init; }
     public Color ResetPanelBorder { get; init; }
@@ -114,6 +117,8 @@ public class ThemeColorSet
         ResetCellSelectedBg = Color.FromArgb(40, 90, 160),
         ResetCellSelectedBorder = Color.FromArgb(100, 149, 237),
         ResetCellHasOffsetMark = Color.FromArgb(255, 165, 0),
+
+        WindowBorderColor = Color.FromArgb(80, 80, 80),
     };
 
     public static ThemeColorSet Light => new()
@@ -162,6 +167,8 @@ public class ThemeColorSet
         ResetCellSelectedBg = Color.FromArgb(180, 210, 250),
         ResetCellSelectedBorder = Color.FromArgb(100, 149, 237),
         ResetCellHasOffsetMark = Color.FromArgb(230, 130, 0),
+
+        WindowBorderColor = Color.FromArgb(180, 180, 180),
     };
 
     public static ThemeColorSet FromTheme(AppTheme theme)
