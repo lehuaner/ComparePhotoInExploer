@@ -58,3 +58,5 @@ ComparePhotoInExploer-*.zip
 build-release.bat
 .github/workflows/release.yml
 build-release.ps1
+业务逻辑.md
+UI设计规范.md
