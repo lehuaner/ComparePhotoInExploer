@@ -1,6 +1,3 @@
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-
 namespace ComparePhotoInExploer;
 
 /// <summary>
@@ -67,46 +64,18 @@ public partial class Form1 : Form
     // 拖放
     private bool _isDragOver = false; // 是否有文件正在拖入
 
-    // Win32 拖拽移动
-    [DllImport("user32.dll")]
-    private static extern bool ReleaseCapture();
-    [DllImport("user32.dll")]
-    private static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
-    private const int WM_NCLBUTTONDOWN = 0xA1;
-    private const int HTCAPTION = 2;
-
-    // Win32 圆角窗口
-    [DllImport("user32.dll")]
-    private static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateRoundRectRgn(int x1, int y1, int x2, int y2, int cx, int cy);
-    [DllImport("gdi32.dll")]
-    private static extern int DeleteObject(IntPtr hObject);
-
-    private const int CornerRadius = 12;
+    // 保存最大化前的窗口位置和大小，用于恢复
+    private Rectangle _restoreBounds;
 
     // 边框调整大小区域宽度
     private const int ResizeBorderWidth = 6;
 
     private void ApplyRoundCorner()
     {
-        if (_isWindowMaximized)
-        {
-            // 最大化时移除圆角
-            SetWindowRgn(this.Handle, IntPtr.Zero, true);
-        }
-        else
-        {
-            var rgn = CreateRoundRectRgn(0, 0, this.Width + 1, this.Height + 1, CornerRadius, CornerRadius);
-            SetWindowRgn(this.Handle, rgn, true);
-            // SetWindowRgn 会接管 hRgn 的所有权，不需要 DeleteObject
-        }
+        NativeMethods.ApplyRoundCorner(this.Handle, this.Width, this.Height, _isWindowMaximized);
     }
 
-    // Win32 监听系统主题变化
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    private static extern int RegisterWindowMessage(string lpString);
-    private readonly int _wmSettingChange = RegisterWindowMessage("WM_SETTINGCHANGE");
+    private readonly int _wmSettingChange = NativeMethods.RegisterWindowMessage("WM_SETTINGCHANGE");
 
     public Form1(string[] imagePaths)
     {
@@ -128,15 +97,15 @@ public partial class Form1 : Form
         _resetOverlay = new ResetOverlayHelper(this);
 
         // 加载主题设置
-        LoadThemeSetting();
+        _currentTheme = AppSettings.LoadThemeSetting();
         ApplyTheme(_currentTheme);
         
         // 加载右键菜单设置
-        LoadRightClickMenuSetting();
+        _rightClickMenuEnabled = AppSettings.LoadRightClickMenuSetting();
         // 第一次启动时默认安装右键菜单
         if (_rightClickMenuEnabled)
         {
-            InstallRightClickMenu();
+            RightClickMenuHelper.Install();
         }
 
         _imagePaths = imagePaths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
@@ -166,7 +135,25 @@ public partial class Form1 : Form
         this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
 
         // 加载上次的窗口位置和大小（覆盖默认值）
-        LoadWindowState();
+        var savedState = AppSettings.LoadWindowState();
+        if (savedState != null)
+        {
+            var (maximized, bounds) = savedState.Value;
+            if (maximized)
+            {
+                this.StartPosition = FormStartPosition.Manual;
+                this.Location = new Point(bounds.X, bounds.Y);
+                this.Size = new Size(bounds.Width, bounds.Height);
+                this.WindowState = FormWindowState.Maximized;
+                _isWindowMaximized = true;
+            }
+            else
+            {
+                this.StartPosition = FormStartPosition.Manual;
+                this.Location = new Point(bounds.X, bounds.Y);
+                this.Size = bounds.Size;
+            }
+        }
 
         // 设置最小窗口大小
         this.MinimumSize = new Size(500, 350);
@@ -178,7 +165,7 @@ public partial class Form1 : Form
         this.Load += (s, e) => ApplyRoundCorner();
 
         // 关闭时保存窗口状态
-        this.FormClosing += (s, e) => SaveWindowState();
+        this.FormClosing += (s, e) => AppSettings.SaveWindowState(_isWindowMaximized, _isWindowMaximized ? _restoreBounds : this.Bounds);
 
         // 允许拖放
         this.AllowDrop = true;
@@ -211,18 +198,6 @@ public partial class Form1 : Form
             SaveCurrentToHistory();
     }
 
-    private const int WM_SYSCOMMAND = 0x0112;
-    private const int SC_CLOSE = 0xF060;
-    private const int WM_NCHITTEST = 0x0084;
-    private const int HTLEFT = 10;
-    private const int HTRIGHT = 11;
-    private const int HTTOP = 12;
-    private const int HTTOPLEFT = 13;
-    private const int HTTOPRIGHT = 14;
-    private const int HTBOTTOM = 15;
-    private const int HTBOTTOMLEFT = 16;
-    private const int HTBOTTOMRIGHT = 17;
-
     /// <summary>
     /// 重写以接收系统主题变化消息，以及处理模态对话框期间的任务栏关闭请求
     /// </summary>
@@ -236,7 +211,7 @@ public partial class Form1 : Form
         }
         // 当窗口被模态对话框禁用时，任务栏右键"关闭"发送的WM_SYSCOMMAND SC_CLOSE会被忽略
         // 直接关闭整个程序
-        if (m.Msg == WM_SYSCOMMAND && (int)m.WParam == SC_CLOSE)
+        if (m.Msg == NativeMethods.WM_SYSCOMMAND && (int)m.WParam == NativeMethods.SC_CLOSE)
         {
             if (this.OwnedForms.Length > 0)
             {
@@ -245,7 +220,7 @@ public partial class Form1 : Form
             }
         }
         // 无边框窗口的边框调整大小支持
-        if (m.Msg == WM_NCHITTEST && !_isWindowMaximized)
+        if (m.Msg == NativeMethods.WM_NCHITTEST && !_isWindowMaximized)
         {
             var pos = PointToClient(new Point((int)m.LParam));
             int x = pos.X, y = pos.Y;
@@ -256,96 +231,26 @@ public partial class Form1 : Form
             bool onLeft = x < bw, onRight = x >= w - bw;
             bool onTop = y < bw, onBottom = y >= h - bw;
 
-            if (onTop && onLeft) { m.Result = (IntPtr)HTTOPLEFT; return; }
-            if (onTop && onRight) { m.Result = (IntPtr)HTTOPRIGHT; return; }
-            if (onBottom && onLeft) { m.Result = (IntPtr)HTBOTTOMLEFT; return; }
-            if (onBottom && onRight) { m.Result = (IntPtr)HTBOTTOMRIGHT; return; }
-            if (onLeft) { m.Result = (IntPtr)HTLEFT; return; }
-            if (onRight) { m.Result = (IntPtr)HTRIGHT; return; }
-            if (onTop) { m.Result = (IntPtr)HTTOP; return; }
-            if (onBottom) { m.Result = (IntPtr)HTBOTTOM; return; }
+            if (onTop && onLeft) { m.Result = (IntPtr)NativeMethods.HTTOPLEFT; return; }
+            if (onTop && onRight) { m.Result = (IntPtr)NativeMethods.HTTOPRIGHT; return; }
+            if (onBottom && onLeft) { m.Result = (IntPtr)NativeMethods.HTBOTTOMLEFT; return; }
+            if (onBottom && onRight) { m.Result = (IntPtr)NativeMethods.HTBOTTOMRIGHT; return; }
+            if (onLeft) { m.Result = (IntPtr)NativeMethods.HTLEFT; return; }
+            if (onRight) { m.Result = (IntPtr)NativeMethods.HTRIGHT; return; }
+            if (onTop) { m.Result = (IntPtr)NativeMethods.HTTOP; return; }
+            if (onBottom) { m.Result = (IntPtr)NativeMethods.HTBOTTOM; return; }
         }
         base.WndProc(ref m);
     }
 
     #region 主题管理
 
-    private static readonly string ThemeSettingFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "AppData", "Local", "ComparePhotoInExploer", "theme.txt");
-
-    private static readonly string WindowStateFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "AppData", "Local", "ComparePhotoInExploer", "windowstate.txt");
-
-    private static readonly string RightClickMenuSettingFile = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "AppData", "Local", "ComparePhotoInExploer", "rightclickmenu.txt");
-
-    private void LoadThemeSetting()
-    {
-        try
-        {
-            if (File.Exists(ThemeSettingFile))
-            {
-                var text = File.ReadAllText(ThemeSettingFile).Trim();
-                if (Enum.TryParse<AppTheme>(text, out var theme))
-                {
-                    _currentTheme = theme;
-                    return;
-                }
-            }
-        }
-        catch { }
-        _currentTheme = AppTheme.System;
-    }
-
-    private void SaveThemeSetting()
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(ThemeSettingFile)!;
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(ThemeSettingFile, _currentTheme.ToString());
-        }
-        catch { }
-    }
-
-    private void LoadRightClickMenuSetting()
-    {
-        try
-        {
-            if (File.Exists(RightClickMenuSettingFile))
-            {
-                var text = File.ReadAllText(RightClickMenuSettingFile).Trim();
-                if (bool.TryParse(text, out var enabled))
-                {
-                    _rightClickMenuEnabled = enabled;
-                    return;
-                }
-            }
-        }
-        catch { }
-        _rightClickMenuEnabled = true; // 默认开启
-    }
-
-    private void SaveRightClickMenuSetting()
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(RightClickMenuSettingFile)!;
-            Directory.CreateDirectory(dir);
-            File.WriteAllText(RightClickMenuSettingFile, _rightClickMenuEnabled.ToString());
-        }
-        catch { }
-    }
-
     private void ApplyTheme(AppTheme theme)
     {
         _currentTheme = theme;
         _colors = ThemeColorSet.FromTheme(theme);
         _checkerBrush = null; // 重建棋盘格
-        SaveThemeSetting();
+        AppSettings.SaveThemeSetting(theme);
     }
 
     private void CycleTheme()
@@ -369,117 +274,26 @@ public partial class Form1 : Form
 
     #endregion
 
-    #region 窗口状态保存与恢复
-
-    private void LoadWindowState()
-    {
-        try
-        {
-            if (!File.Exists(WindowStateFile)) return;
-            var lines = File.ReadAllLines(WindowStateFile);
-            if (lines.Length < 4) return;
-
-            bool maximized = lines[0].Trim() == "1";
-            int x = int.Parse(lines[1].Trim());
-            int y = int.Parse(lines[2].Trim());
-            int w = int.Parse(lines[3].Trim());
-            int h = int.Parse(lines[4].Trim());
-
-            // 确保窗口在可见屏幕范围内
-            var screen = Screen.FromPoint(new Point(x, y));
-            if (screen != null)
-            {
-                // 如果保存的位置超出所有屏幕范围，使用默认位置
-                var bounds = screen.Bounds;
-                if (x < bounds.Left - w || x > bounds.Right || y < bounds.Top - h || y > bounds.Bottom)
-                    return;
-            }
-
-            if (maximized)
-            {
-                this.StartPosition = FormStartPosition.Manual;
-                this.Location = new Point(x, y);
-                this.Size = new Size(w, h);
-                this.WindowState = FormWindowState.Maximized;
-                _isWindowMaximized = true;
-            }
-            else
-            {
-                this.StartPosition = FormStartPosition.Manual;
-                this.Location = new Point(x, y);
-                this.Size = new Size(Math.Max(w, 400), Math.Max(h, 300));
-            }
-        }
-        catch
-        {
-            // 加载失败时使用默认设置
-        }
-    }
-
-    private void SaveWindowState()
-    {
-        try
-        {
-            var dir = Path.GetDirectoryName(WindowStateFile)!;
-            Directory.CreateDirectory(dir);
-
-            bool maximized = _isWindowMaximized;
-            // 最大化时需要记住还原后的位置和大小
-            var rect = maximized ? _restoreBounds : this.Bounds;
-
-            File.WriteAllLines(WindowStateFile, new[]
-            {
-                maximized ? "1" : "0",
-                rect.X.ToString(),
-                rect.Y.ToString(),
-                rect.Width.ToString(),
-                rect.Height.ToString()
-            });
-        }
-        catch { }
-    }
-
-    // 保存最大化前的窗口位置和大小，用于恢复
-    private Rectangle _restoreBounds;
-
-    #endregion
-
     #region 拖放支持
-
-    private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tiff", ".tif", ".webp", ".ico", ".svg" };
-
-    private static bool IsImageFile(string path)
-    {
-        var ext = Path.GetExtension(path).ToLowerInvariant();
-        return ImageExtensions.Contains(ext);
-    }
 
     private void Form1_DragEnter(object? sender, DragEventArgs e)
     {
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+        if (FileDropHelper.ExtractImageFiles(e.Data) != null)
         {
-            var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
-            if (files != null && files.Any(IsImageFile))
-            {
-                e.Effect = DragDropEffects.Copy;
-                _isDragOver = true;
-                this.Invalidate();
-                return;
-            }
+            e.Effect = DragDropEffects.Copy;
+            _isDragOver = true;
+            this.Invalidate();
+            return;
         }
         e.Effect = DragDropEffects.None;
     }
 
     private void Form1_DragOver(object? sender, DragEventArgs e)
     {
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true)
+        if (FileDropHelper.ExtractImageFiles(e.Data) != null)
         {
-            var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
-            if (files != null && files.Any(IsImageFile))
-            {
-                e.Effect = DragDropEffects.Copy;
-                return;
-            }
+            e.Effect = DragDropEffects.Copy;
+            return;
         }
         e.Effect = DragDropEffects.None;
     }
@@ -494,13 +308,8 @@ public partial class Form1 : Form
     {
         _isDragOver = false;
 
-        if (e.Data?.GetDataPresent(DataFormats.FileDrop) != true) return;
-
-        var files = (string[]?)e.Data.GetData(DataFormats.FileDrop);
-        if (files == null) return;
-
-        var imageFiles = files.Where(IsImageFile).ToArray();
-        if (imageFiles.Length == 0) return;
+        var imageFiles = FileDropHelper.ExtractImageFiles(e.Data);
+        if (imageFiles == null) return;
 
         // 清空当前对比并加载新图片组
         LoadNewGroup(imageFiles);
@@ -939,7 +748,7 @@ public partial class Form1 : Form
             // 绘制窗口边框（圆角，适配主题）
             if (!_isWindowMaximized)
             {
-                float r = CornerRadius;
+                float r = NativeMethods.CornerRadius;
                 float w = this.ClientSize.Width - 1;
                 float h = this.ClientSize.Height - 1;
                 using var borderPen = new Pen(_colors.WindowBorderColor, 1);
@@ -1478,15 +1287,15 @@ public partial class Form1 : Form
             if (_btnRightClickMenu.Contains(e.Location))
             {
                 _rightClickMenuEnabled = !_rightClickMenuEnabled;
-                SaveRightClickMenuSetting();
+                AppSettings.SaveRightClickMenuSetting(_rightClickMenuEnabled);
                 
                 if (_rightClickMenuEnabled)
                 {
-                    InstallRightClickMenu();
+                    RightClickMenuHelper.Install();
                 }
                 else
                 {
-                    UninstallRightClickMenu();
+                    RightClickMenuHelper.Uninstall();
                 }
                 
                 this.Invalidate();
@@ -1506,8 +1315,8 @@ public partial class Form1 : Form
                 return;
             }
             // 拖动窗口
-            ReleaseCapture();
-            SendMessage(this.Handle, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+            NativeMethods.ReleaseCapture();
+            NativeMethods.SendMessage(this.Handle, NativeMethods.WM_NCLBUTTONDOWN, NativeMethods.HTCAPTION, 0);
             return;
         }
 
@@ -1887,42 +1696,6 @@ public partial class Form1 : Form
         return base.ProcessCmdKey(ref msg, keyData);
     }
 
-    private static PointF ScreenToNormalized(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
-    {
-        float scaledWidth = imageSize.Width * zoom;
-        float scaledHeight = imageSize.Height * zoom;
-        float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
-        float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
-
-        float normX = (screenPos.X - imgX) / scaledWidth;
-        float normY = (screenPos.Y - imgY) / scaledHeight;
-        return new PointF(normX, normY);
-    }
-
-    private static PointF ZoomAtNormalized(PointF norm, Rectangle drawArea, float oldZoom, float newZoom, PointF oldOffset, Size imageSize)
-    {
-        float oldScaledWidth = imageSize.Width * oldZoom;
-        float oldScaledHeight = imageSize.Height * oldZoom;
-        float oldScreenX = drawArea.Left + (drawArea.Width - oldScaledWidth) / 2f + oldOffset.X + norm.X * oldScaledWidth;
-        float oldScreenY = drawArea.Top + (drawArea.Height - oldScaledHeight) / 2f + oldOffset.Y + norm.Y * oldScaledHeight;
-
-        float newScaledWidth = imageSize.Width * newZoom;
-        float newScaledHeight = imageSize.Height * newZoom;
-        float newOffsetX = oldScreenX - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - norm.X * newScaledWidth;
-        float newOffsetY = oldScreenY - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - norm.Y * newScaledHeight;
-
-        return new PointF(newOffsetX, newOffsetY);
-    }
-
-    private static PointF ZoomAndMoveToTarget(PointF norm, Rectangle drawArea, float newZoom, Size imageSize, PointF targetScreenPos)
-    {
-        float newScaledWidth = imageSize.Width * newZoom;
-        float newScaledHeight = imageSize.Height * newZoom;
-        float offsetX = targetScreenPos.X - drawArea.Left - (drawArea.Width - newScaledWidth) / 2f - norm.X * newScaledWidth;
-        float offsetY = targetScreenPos.Y - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - norm.Y * newScaledHeight;
-        return new PointF(offsetX, offsetY);
-    }
-
     private bool IsAltPressed()
     {
         return (ModifierKeys & Keys.Alt) == Keys.Alt;
@@ -1951,61 +1724,6 @@ public partial class Form1 : Form
             this.WindowState = FormWindowState.Maximized;
             _isWindowMaximized = true;
         }
-    }
-
-    // 右键菜单注册表路径（HKCU 不需要管理员权限）
-    private const string RightClickMenuRegPath = @"Software\Classes\SystemFileAssociations\image\shell\ComparePhotos";
-
-    [DllImport("shell32.dll")]
-    private static extern void SHChangeNotify(int wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
-
-    private void InstallRightClickMenu()
-    {
-        try
-        {
-            string exePath = Application.ExecutablePath;
-
-            // 删除旧项（如果存在）
-            using (var baseKey = Microsoft.Win32.Registry.CurrentUser)
-            {
-                if (baseKey.OpenSubKey(RightClickMenuRegPath) != null)
-                    baseKey.DeleteSubKeyTree(RightClickMenuRegPath);
-            }
-
-            // 创建注册表项
-            using (var regKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RightClickMenuRegPath))
-            {
-                regKey.SetValue("MUIVerb", "对比图片");
-                regKey.SetValue("MultiSelectModel", "Player");
-                regKey.SetValue("Icon", $"{exePath},0");
-            }
-
-            // 创建 command 子项
-            using (var cmdKey = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RightClickMenuRegPath + @"\command"))
-            {
-                cmdKey.SetValue("", $"\"{exePath}\" \"%1\"");
-            }
-
-            // 刷新 Shell 缓存，使右键菜单立即生效
-            SHChangeNotify(0x08000000, 0x1000, IntPtr.Zero, IntPtr.Zero);
-        }
-        catch { }
-    }
-
-    private void UninstallRightClickMenu()
-    {
-        try
-        {
-            using (var baseKey = Microsoft.Win32.Registry.CurrentUser)
-            {
-                if (baseKey.OpenSubKey(RightClickMenuRegPath) != null)
-                    baseKey.DeleteSubKeyTree(RightClickMenuRegPath);
-            }
-
-            // 刷新 Shell 缓存
-            SHChangeNotify(0x08000000, 0x1000, IntPtr.Zero, IntPtr.Zero);
-        }
-        catch { }
     }
 
 
@@ -2090,8 +1808,8 @@ public partial class Form1 : Form
                 float oldEff = _baseZooms[activeIdx] * oldZoomLevel;
                 float newEff = _baseZooms[activeIdx] * newZoomLevel;
 
-                PointF norm = ScreenToNormalized(mousePos, activeRect, oldEff, _offsets[activeIdx], activeImgSize);
-                _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEff, newEff, _offsets[activeIdx], activeImgSize);
+                PointF norm = ZoomCalculator.ScreenToNormalized(mousePos, activeRect, oldEff, _offsets[activeIdx], activeImgSize);
+                _offsets[activeIdx] = ZoomCalculator.ZoomAtNormalized(norm, activeRect, oldEff, newEff, _offsets[activeIdx], activeImgSize);
                 _zoomLevels[activeIdx] = newZoomLevel;
             }
             else
@@ -2116,8 +1834,8 @@ public partial class Form1 : Form
                 float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
 
                 // active图片：直接使用完整offset，确保以鼠标实际所指位置为基准缩放
-                PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
-                _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
+                PointF norm = ZoomCalculator.ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
+                _offsets[activeIdx] = ZoomCalculator.ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
 
                 float activeLocalX = mousePos.X - activeRect.Left;
                 float activeLocalY = mousePos.Y - activeRect.Top;
@@ -2135,14 +1853,14 @@ public partial class Form1 : Form
                     {
                         // 同步对齐：将被动图片的同一归一化位置移到与主动图片鼠标位置对应的地方
                         PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
-                        var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
+                        var computed = ZoomCalculator.ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
                         _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
                     }
                     else
                     {
                         // 独立缩放：被动图片以与主动图片相同比例位置为缩放中心
                         // 即主图1/4处为缩放中心，从图也以其1/4处为缩放中心
-                        _offsets[i] = ZoomAtNormalized(norm, passiveRect, oldEffPassive, newEffPassive, _offsets[i], passiveImgSize);
+                        _offsets[i] = ZoomCalculator.ZoomAtNormalized(norm, passiveRect, oldEffPassive, newEffPassive, _offsets[i], passiveImgSize);
                     }
                 }
 
