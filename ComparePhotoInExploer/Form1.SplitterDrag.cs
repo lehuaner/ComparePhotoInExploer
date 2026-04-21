@@ -207,6 +207,13 @@ public partial class Form1
             if (newLeft < minRatio || newRight < minRatio)
                 return;
 
+            // 试算新比例，检查是否会导致对角重叠（内缩）
+            var testRatios = (float[])_cellWidthRatios.Clone();
+            testRatios[leftCell] = newLeft;
+            testRatios[rightCell] = newRight;
+            if (HasDiagonalOverlaps(testRatios, _cellHeightRatios))
+                return;
+
             _cellWidthRatios[leftCell] = newLeft;
             _cellWidthRatios[rightCell] = newRight;
         }
@@ -266,6 +273,13 @@ public partial class Form1
             float newBottom = _cellHeightRatios[bottomCell] - deltaRatio;
 
             if (newTop < minRatio || newBottom < minRatio)
+                return;
+
+            // 试算新比例，检查是否会导致对角重叠（内缩）
+            var testRatios = (float[])_cellHeightRatios.Clone();
+            testRatios[topCell] = newTop;
+            testRatios[bottomCell] = newBottom;
+            if (HasDiagonalOverlaps(_cellWidthRatios, testRatios))
                 return;
 
             _cellHeightRatios[topCell] = newTop;
@@ -363,6 +377,68 @@ public partial class Form1
                     _cellHeightRatios[r * _cols + c] /= sum;
             }
         }
+    }
+
+    /// <summary>
+    /// 检测给定宽度和高度比例数组是否会导致单元格对角重叠（内缩问题）
+    /// 两种重叠情况：
+    /// 1. 主对角线：格子(r,c)的右下角侵入格子(r+1,c+1)的左上角
+    ///    条件：第r行比第r+1行右边界更靠右 且 第c列比第c+1列底边界更靠下
+    /// 2. 副对角线：格子(r,c+1)的左下角侵入格子(r+1,c)的右上角
+    ///    条件：第r行比第r+1行左边界更靠左 且 第c+1列比第c列底边界更靠下
+    /// </summary>
+    private bool HasDiagonalOverlaps(float[] widthRatios, float[] heightRatios)
+    {
+        if (_cols <= 1 || _rows <= 1)
+            return false;
+
+        // 预计算每行各列的右边界（累积宽度）
+        var rowRightEdges = new float[_rows, _cols];
+        for (int r = 0; r < _rows; r++)
+        {
+            float x = 0;
+            for (int c = 0; c < _cols; c++)
+            {
+                x += widthRatios[r * _cols + c];
+                rowRightEdges[r, c] = x;
+            }
+        }
+
+        // 预计算每列各行的底边界（累积高度）
+        var colBottomEdges = new float[_rows, _cols];
+        for (int c = 0; c < _cols; c++)
+        {
+            float y = 0;
+            for (int r = 0; r < _rows; r++)
+            {
+                y += heightRatios[r * _cols + c];
+                colBottomEdges[r, c] = y;
+            }
+        }
+
+        const float eps = 0.001f;
+
+        for (int r = 0; r < _rows - 1; r++)
+        {
+            for (int c = 0; c < _cols - 1; c++)
+            {
+                // 主对角线重叠：格子(r,c) 与 格子(r+1,c+1)
+                // 格子(r,c)右边界 > 格子(r+1,c)右边界（第r行比第r+1行更靠右）
+                // 格子(r,c)底边界 > 格子(r,c+1)底边界（第c列比第c+1列更靠下）
+                if (rowRightEdges[r, c] > rowRightEdges[r + 1, c] + eps
+                    && colBottomEdges[r, c] > colBottomEdges[r, c + 1] + eps)
+                    return true;
+
+                // 副对角线重叠：格子(r,c+1) 与 格子(r+1,c)
+                // 第r行右边界 < 第r+1行右边界（第r行更靠左，即格子(r,c+1)向左侵入格子(r+1,c)区域）
+                // 第c+1列底边界 > 第c列底边界（第c+1列更靠下，即格子(r,c+1)向下侵入格子(r+1,c)区域）
+                if (rowRightEdges[r, c] < rowRightEdges[r + 1, c] - eps
+                    && colBottomEdges[r, c + 1] > colBottomEdges[r, c] + eps)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

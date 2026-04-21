@@ -14,7 +14,7 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 - `Form1.TitleBar.cs`：自绘标题栏——标题栏按钮绘制（历史记录、操作说明、主题、同步缩放、同步移动、缩放说明、右键菜单、重置偏移、最小化/最大化/关闭）
 - `Form1.Overlays.cs`：浮层面板与提示——DrawHelpPanel、DrawZoomHelpPanel、DrawEmptyHint、DrawDropOverlay
 - `Form1.DragDrop.cs`：拖放支持——DragEnter/Over/Leave/Drop 事件处理
-- `Form1.SplitterDrag.cs`：分割线拖动——拖拽网格分割线调整视窗大小（普通模式调整整条分割线=所有列/行变化，Shift模式只调整分割线两侧两张图片=单元格级别，可产生不对齐布局）、单元格级别比例管理（_cellWidthRatios/_cellHeightRatios）、HitTest/Clamp/归一化、华容道空区域检测（GetGapRegions）、Shift实时检测（IsShiftPressed）
+- `Form1.SplitterDrag.cs`：分割线拖动——拖拽网格分割线调整视窗大小（普通模式调整整条分割线=所有列/行变化，Shift模式只调整分割线两侧两张图片=单元格级别，可产生不对齐布局但禁止对角重叠内缩）、单元格级别比例管理（_cellWidthRatios/_cellHeightRatios）、HitTest/Clamp/归一化、华容道空区域检测（GetGapRegions）、对角重叠检测（HasDiagonalOverlaps）、Shift实时检测（IsShiftPressed）
 - `Form1.Designer.cs`：窗体设计器生成的代码（一般无需手动修改）
 
 ## Helpers/（辅助工具类）
