@@ -16,6 +16,14 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 - `Form1.DragDrop.cs`：拖放支持——DragEnter/Over/Leave/Drop 事件处理
 - `Form1.Designer.cs`：窗体设计器生成的代码（一般无需手动修改）
 
+## Helpers/（辅助工具类）
+
+- `Helpers/NativeMethods.cs`：Win32 API 声明——圆角窗口、WM_NCHITTEST、窗口消息等
+- `Helpers/CustomMessageBox.cs`：自定义消息框——替代 MessageBox 的主题适配弹窗（含 ThemedMessageBox 便捷调用）
+- `Helpers/FileDropHelper.cs`：拖放辅助——从 DragEventArgs 中提取图片文件路径
+- `Helpers/ResetOverlayHelper.cs`：重置偏移覆盖层——显示/隐藏、绘制各图偏移信息与缩略图、确认重置
+- `Helpers/RightClickMenuHelper.cs`：右键菜单集成——注册/注销 Windows 资源管理器右键菜单项
+
 ## 其他模块
 
 - `Program.cs`：程序入口、IPC 单实例通信（Named Pipe）、命令行参数处理
@@ -25,11 +33,6 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 - `HistoryBarData.cs`：历史记录栏 UI 数据——展开/折叠状态、分组列表、缩略图缓存、绘制逻辑
 - `ImageProcessor.cs`：图片处理——缩略图生成、Base64 编解码
 - `ZoomCalculator.cs`：缩放计算——屏幕坐标与归一化坐标转换、同步对齐/独立缩放偏移计算
-- `ResetOverlayHelper.cs`：重置偏移覆盖层——显示/隐藏、绘制各图偏移信息与缩略图、确认重置
-- `RightClickMenuHelper.cs`：右键菜单集成——注册/注销 Windows 资源管理器右键菜单项
-- `NativeMethods.cs`：Win32 API 声明——圆角窗口、WM_NCHITTEST、窗口消息等
-- `CustomMessageBox.cs`：自定义消息框——替代 MessageBox 的主题适配弹窗
-- `FileDropHelper.cs`：拖放辅助——从 DragEventArgs 中提取图片文件路径
 
 ## 按功能快速定位
 
@@ -41,8 +44,10 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 | 拖动/移动逻辑 | `Form1.MouseInteraction.cs` → `Form1.Zoom.cs` |
 | 主题/配色 | `ThemeColorSet.cs` → `Form1.cs`（ApplyTheme） → `AppSettings.cs` |
 | 历史记录 | `Form1.History.cs` → `HistoryData.cs` → `HistoryBarData.cs` |
-| 右键菜单 | `RightClickMenuHelper.cs` → `AppSettings.cs` |
-| 窗口边框/圆角 | `NativeMethods.cs` → `Form1.cs`（WndProc） |
+| 右键菜单 | `Helpers/RightClickMenuHelper.cs` → `AppSettings.cs` |
+| 窗口边框/圆角 | `Helpers/NativeMethods.cs` → `Form1.cs`（WndProc） |
 | 图片加载/布局 | `Form1.ImageLayout.cs` |
-| 拖放文件 | `Form1.DragDrop.cs` → `FileDropHelper.cs` |
+| 拖放文件 | `Form1.DragDrop.cs` → `Helpers/FileDropHelper.cs` |
 | 绘制/渲染 | `Form1.Paint.cs` → `Form1.Overlays.cs` → `Form1.TitleBar.cs` |
+| 重置偏移 | `Helpers/ResetOverlayHelper.cs` → `Form1.MouseInteraction.cs` |
+| 自定义弹窗 | `Helpers/CustomMessageBox.cs`（ThemedMessageBox.Show） |
