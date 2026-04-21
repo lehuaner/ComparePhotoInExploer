@@ -127,4 +127,33 @@ public partial class Form1
             _baseZooms[i] = CalculateFitZoom(_images[i]!, rect);
         }
     }
+
+    /// <summary>
+    /// 交换两张图片的位置（图片对象、路径、偏移、缩放等所有数据互换）
+    /// </summary>
+    private void SwapImages(int indexA, int indexB)
+    {
+        if (indexA < 0 || indexA >= _imageCount || indexB < 0 || indexB >= _imageCount || indexA == indexB)
+            return;
+
+        // 交换图片对象
+        (_images[indexA], _images[indexB]) = (_images[indexB], _images[indexA]);
+
+        // 交换路径
+        (_imagePaths[indexA], _imagePaths[indexB]) = (_imagePaths[indexB], _imagePaths[indexA]);
+
+        // 交换偏移
+        (_offsets[indexA], _offsets[indexB]) = (_offsets[indexB], _offsets[indexA]);
+
+        // 交换手动偏移
+        (_manualOffsets[indexA], _manualOffsets[indexB]) = (_manualOffsets[indexB], _manualOffsets[indexA]);
+
+        // 交换基础缩放
+        (_baseZooms[indexA], _baseZooms[indexB]) = (_baseZooms[indexB], _baseZooms[indexA]);
+
+        // 交换独立缩放级别
+        (_zoomLevels[indexA], _zoomLevels[indexB]) = (_zoomLevels[indexB], _zoomLevels[indexA]);
+
+        this.Invalidate();
+    }
 }

@@ -32,6 +32,19 @@ public partial class Form1 : Form
     private float _zoomLevel = 1.0f;
     private int _shiftDragIndex = -1; // Shift拖动时选中的图片索引，-1表示未选中
 
+    // Tab+左键拖动互换图片
+    private bool _isTabSwapping = false; // 是否处于Tab互换拖动模式
+    private int _tabSwapSourceIndex = -1; // Tab互换拖动的源图片索引
+    private int _tabSwapTargetIndex = -1; // Tab互换拖动的当前悬停目标索引
+
+    /// <summary>
+    /// 检测Tab键是否正在被按下
+    /// </summary>
+    private static bool IsTabPressed()
+    {
+        return (NativeMethods.GetAsyncKeyState(Keys.Tab) & 0x8000) != 0;
+    }
+
     // 每张图独立的数据
     private Image?[] _images;
     private float[] _baseZooms;

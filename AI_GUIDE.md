@@ -42,6 +42,7 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 | 快捷键/操作说明 | `Form1.Keyboard.cs` → `Form1.Overlays.cs` |
 | 缩放逻辑 | `ZoomCalculator.cs` → `Form1.Zoom.cs`（MouseWheel） |
 | 拖动/移动逻辑 | `Form1.MouseInteraction.cs` → `Form1.Zoom.cs` |
+| 图片互换（Tab+拖动） | `Form1.MouseInteraction.cs`（Tab拖动交互） → `Form1.ImageLayout.cs`（SwapImages） → `Form1.Paint.cs`（高亮绘制） |
 | 主题/配色 | `ThemeColorSet.cs` → `Form1.cs`（ApplyTheme） → `AppSettings.cs` |
 | 历史记录 | `Form1.History.cs` → `HistoryData.cs` → `HistoryBarData.cs` |
 | 右键菜单 | `Helpers/RightClickMenuHelper.cs` → `AppSettings.cs` |

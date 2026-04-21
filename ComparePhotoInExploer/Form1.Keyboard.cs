@@ -43,6 +43,9 @@ public partial class Form1
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        // 拦截Tab键，防止焦点切换
+        if (keyData == Keys.Tab)
+            return true;
         if (keyData == Keys.Alt || keyData == (Keys.Alt | Keys.Menu))
             return true;
         if (keyData == (Keys.Control | Keys.W))

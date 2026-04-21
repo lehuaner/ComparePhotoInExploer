@@ -316,6 +316,20 @@ public partial class Form1
             return;
         }
 
+        // Tab+左键：进入图片互换拖动模式
+        if (e.Button == MouseButtons.Left && IsTabPressed())
+        {
+            int hitIdx = HitTest(e.Location);
+            if (hitIdx >= 0 && hitIdx < _imageCount)
+            {
+                _isTabSwapping = true;
+                _tabSwapSourceIndex = hitIdx;
+                _tabSwapTargetIndex = -1;
+                this.Cursor = Cursors.Hand;
+            }
+            return;
+        }
+
         // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
@@ -466,10 +480,48 @@ public partial class Form1
             _lastMousePos = e.Location;
             this.Invalidate();
         }
+
+        // Tab互换拖动模式：检测悬停目标，Tab释放则取消
+        if (_isTabSwapping)
+        {
+            // Tab键释放时取消互换
+            if (!IsTabPressed())
+            {
+                _isTabSwapping = false;
+                _tabSwapSourceIndex = -1;
+                _tabSwapTargetIndex = -1;
+                this.Cursor = Cursors.Default;
+                this.Invalidate();
+                return;
+            }
+
+            int hitIdx = HitTest(e.Location);
+            int newTarget = (hitIdx >= 0 && hitIdx < _imageCount && hitIdx != _tabSwapSourceIndex) ? hitIdx : -1;
+            if (newTarget != _tabSwapTargetIndex)
+            {
+                _tabSwapTargetIndex = newTarget;
+                this.Invalidate();
+            }
+        }
     }
 
     private void Form1_MouseUp(object? sender, MouseEventArgs e)
     {
+        // Tab互换拖动释放：交换图片
+        if (_isTabSwapping)
+        {
+            if (_tabSwapTargetIndex >= 0 && _tabSwapSourceIndex >= 0)
+            {
+                SwapImages(_tabSwapSourceIndex, _tabSwapTargetIndex);
+            }
+            _isTabSwapping = false;
+            _tabSwapSourceIndex = -1;
+            _tabSwapTargetIndex = -1;
+            this.Cursor = Cursors.Default;
+            this.Invalidate();
+            return;
+        }
+
         _isDragging = false;
         _shiftDragIndex = -1;
         _dragTargetIndex = -1;

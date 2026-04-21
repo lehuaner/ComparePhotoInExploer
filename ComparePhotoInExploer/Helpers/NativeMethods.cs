@@ -50,6 +50,10 @@ public static class NativeMethods
     public const int HTBOTTOMLEFT = 16;
     public const int HTBOTTOMRIGHT = 17;
 
+    // 键盘状态检测
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(Keys vKey);
+
     /// <summary>
     /// 为窗口应用圆角区域
     /// </summary>

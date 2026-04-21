@@ -52,6 +52,26 @@ public partial class Form1
                     e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
                 for (int r = 1; r < _rows; r++)
                     e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
+
+                // Tab互换拖动模式：绘制目标位置高亮边框和源位置半透明覆盖
+                if (_isTabSwapping)
+                {
+                    // 源位置半透明遮罩
+                    if (_tabSwapSourceIndex >= 0 && _tabSwapSourceIndex < _imageCount)
+                    {
+                        var srcRect = GetCellRect(_tabSwapSourceIndex);
+                        using var srcOverlay = new SolidBrush(Color.FromArgb(60, 100, 149, 237));
+                        e.Graphics.FillRectangle(srcOverlay, srcRect);
+                    }
+
+                    // 目标位置高亮边框
+                    if (_tabSwapTargetIndex >= 0 && _tabSwapTargetIndex < _imageCount)
+                    {
+                        var tgtRect = GetCellRect(_tabSwapTargetIndex);
+                        using var highlightPen = new Pen(Color.FromArgb(100, 149, 237), 3);
+                        e.Graphics.DrawRectangle(highlightPen, tgtRect.X + 1, tgtRect.Y + 1, tgtRect.Width - 2, tgtRect.Height - 2);
+                    }
+                }
             }
             else
             {
