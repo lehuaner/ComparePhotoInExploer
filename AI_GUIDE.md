@@ -2,11 +2,22 @@
 
 AI 在制作或修改功能时，优先查看或修改以下文件：
 
-- `Form1.cs`：主窗体逻辑——构造函数、绘制调度（Paint）、缩放/移动计算、窗口管理、历史记录交互、主题切换、拖放、IPC 通信
+## Form1 Partial Class 文件（按职责拆分）
+
+- `Form1.cs`：主窗体核心——字段定义、构造函数、WndProc、主题管理、窗口管理（最大化/还原/圆角）、IPC 通信（AddImagesFromExternal）
+- `Form1.Paint.cs`：绘制逻辑——Paint 事件调度、棋盘格背景、图片绘制（DrawImage）、网格分割线、窗口边框圆角
+- `Form1.MouseInteraction.cs`：鼠标交互——MouseDown/Move/Up、标题栏按钮点击与悬停检测、历史记录栏悬停、拖动/Shift拖动/重置偏移交互
+- `Form1.Zoom.cs`：缩放与滚轮——MouseWheel 事件、同步对齐/独立缩放/关闭同步缩放三种模式、IsSyncZoomDisabled/IsSyncMoveDisabled、GetEffectiveZoom
+- `Form1.History.cs`：历史记录管理（控制器层）——SaveCurrentToHistory、OnHistoryGroupClicked、OnHistoryGroupDeleteRequested、ClearCurrentImages；协调 HistoryData（数据层）和 HistoryBarData（视图层）
+- `Form1.ImageLayout.cs`：图片加载与布局——GetGridLayout、LoadNewGroup、LoadImages、CalculateFitZoom、GetCellRect、HitTest、UpdateBaseZoom
+- `Form1.Keyboard.cs`：键盘处理——KeyDown、ProcessCmdKey（Ctrl+W）、IsAltPressed
 - `Form1.TitleBar.cs`：自绘标题栏——标题栏按钮绘制（历史记录、操作说明、主题、同步缩放、同步移动、缩放说明、右键菜单、重置偏移、最小化/最大化/关闭）
 - `Form1.Overlays.cs`：浮层面板与提示——DrawHelpPanel、DrawZoomHelpPanel、DrawEmptyHint、DrawDropOverlay
-- `Form1.MouseInteraction.cs`：鼠标交互——MouseDown/Move/Up、标题栏按钮点击与悬停检测、历史记录栏悬停、拖动/Shift拖动/滚轮缩放逻辑
+- `Form1.DragDrop.cs`：拖放支持——DragEnter/Over/Leave/Drop 事件处理
 - `Form1.Designer.cs`：窗体设计器生成的代码（一般无需手动修改）
+
+## 其他模块
+
 - `Program.cs`：程序入口、IPC 单实例通信（Named Pipe）、命令行参数处理
 - `ThemeColorSet.cs`：主题颜色定义——暗色/亮色/跟随系统的全部颜色常量
 - `AppSettings.cs`：用户设置持久化——主题、右键菜单开关、窗口位置/大小的保存与加载
@@ -25,10 +36,13 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 | 功能 | 优先查看 |
 |------|---------|
 | 标题栏按钮增删 | `Form1.TitleBar.cs` → `Form1.MouseInteraction.cs`（点击处理） |
-| 快捷键/操作说明 | `Form1.Overlays.cs` → `Form1.cs`（KeyDown） |
-| 缩放逻辑 | `ZoomCalculator.cs` → `Form1.cs`（MouseWheel） |
-| 拖动/移动逻辑 | `Form1.MouseInteraction.cs` → `Form1.cs` |
-| 主题/配色 | `ThemeColorSet.cs` → `AppSettings.cs` |
-| 历史记录 | `HistoryData.cs` → `HistoryBarData.cs` → `Form1.cs` |
+| 快捷键/操作说明 | `Form1.Keyboard.cs` → `Form1.Overlays.cs` |
+| 缩放逻辑 | `ZoomCalculator.cs` → `Form1.Zoom.cs`（MouseWheel） |
+| 拖动/移动逻辑 | `Form1.MouseInteraction.cs` → `Form1.Zoom.cs` |
+| 主题/配色 | `ThemeColorSet.cs` → `Form1.cs`（ApplyTheme） → `AppSettings.cs` |
+| 历史记录 | `Form1.History.cs` → `HistoryData.cs` → `HistoryBarData.cs` |
 | 右键菜单 | `RightClickMenuHelper.cs` → `AppSettings.cs` |
 | 窗口边框/圆角 | `NativeMethods.cs` → `Form1.cs`（WndProc） |
+| 图片加载/布局 | `Form1.ImageLayout.cs` |
+| 拖放文件 | `Form1.DragDrop.cs` → `FileDropHelper.cs` |
+| 绘制/渲染 | `Form1.Paint.cs` → `Form1.Overlays.cs` → `Form1.TitleBar.cs` |

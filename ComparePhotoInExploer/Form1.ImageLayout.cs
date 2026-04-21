@@ -1,0 +1,130 @@
+namespace ComparePhotoInExploer;
+
+/// <summary>
+/// Form1 的图片加载与布局计算逻辑
+/// </summary>
+public partial class Form1
+{
+    /// <summary>
+    /// 根据图片数量计算网格布局 (cols, rows)
+    /// </summary>
+    private static (int cols, int rows) GetGridLayout(int count)
+    {
+        return count switch
+        {
+            1 => (1, 1),
+            2 => (2, 1),
+            3 => (2, 2),
+            4 => (2, 2),
+            5 => (2, 3),
+            6 => (2, 3),
+            _ => (3, 3) // 7, 8, 9
+        };
+    }
+
+    /// <summary>
+    /// 加载新的图片组
+    /// </summary>
+    private void LoadNewGroup(string[] paths)
+    {
+        // 先清空旧图片
+        for (int i = 0; i < _images.Length; i++)
+            _images[i]?.Dispose();
+
+        _imagePaths = paths.Where(p => !string.IsNullOrWhiteSpace(p)).ToArray();
+        _imageCount = Math.Clamp(_imagePaths.Length, 1, 9);
+        (_cols, _rows) = GetGridLayout(_imageCount);
+
+        _images = new Image?[_imageCount];
+        _baseZooms = new float[_imageCount];
+        _offsets = new PointF[_imageCount];
+        _manualOffsets = new PointF[_imageCount];
+        _zoomLevels = new float[_imageCount];
+        for (int i = 0; i < _imageCount; i++)
+        {
+            _offsets[i] = new PointF(0, 0);
+            _manualOffsets[i] = new PointF(0, 0);
+            _zoomLevels[i] = 1.0f;
+        }
+
+        _zoomLevel = 1.0f;
+        _showHelp = false;
+        _shiftDragIndex = -1;
+        _resetOverlay.Hide();
+
+        this.Text = $"图片对比 ({_imageCount}张)";
+
+        LoadImages();
+        UpdateBaseZoom();
+        this.Invalidate();
+    }
+
+    private void LoadImages()
+    {
+        if (_imagePaths == null || _imagePaths.Length == 0)
+            return;
+
+        try
+        {
+            for (int i = 0; i < _imageCount; i++)
+            {
+                _images[i]?.Dispose();
+                _images[i] = null;
+
+                if (i < _imagePaths.Length)
+                {
+                    using var fs = new FileStream(_imagePaths[i], FileMode.Open, FileAccess.Read);
+                    _images[i] = Image.FromStream(fs);
+                }
+            }
+        }
+        catch
+        {
+            // 加载失败时保持为 null
+        }
+    }
+
+    private static float CalculateFitZoom(Image image, Rectangle drawArea)
+    {
+        if (image == null) return 1.0f;
+        float scaleX = (float)drawArea.Width / image.Width;
+        float scaleY = (float)drawArea.Height / image.Height;
+        return Math.Min(scaleX, scaleY);
+    }
+
+    /// <summary>
+    /// 获取第 i 张图的绘制区域（仅扣除标题栏）
+    /// </summary>
+    private Rectangle GetCellRect(int index)
+    {
+        int topOffset = TitleBarHeight;
+        int availW = Math.Max(1, this.ClientSize.Width);
+        int availH = Math.Max(1, this.ClientSize.Height - topOffset);
+        int cellW = Math.Max(1, availW / _cols);
+        int cellH = Math.Max(1, availH / _rows);
+        int col = index % _cols;
+        int row = index / _cols;
+        return new Rectangle(col * cellW, topOffset + row * cellH, cellW, cellH);
+    }
+
+    private int HitTest(PointF screenPos)
+    {
+        for (int i = 0; i < _imageCount; i++)
+        {
+            var rect = GetCellRect(i);
+            if (rect.Contains((int)screenPos.X, (int)screenPos.Y))
+                return i;
+        }
+        return -1;
+    }
+
+    private void UpdateBaseZoom()
+    {
+        for (int i = 0; i < _imageCount; i++)
+        {
+            if (_images[i] == null) continue;
+            var rect = GetCellRect(i);
+            _baseZooms[i] = CalculateFitZoom(_images[i]!, rect);
+        }
+    }
+}
