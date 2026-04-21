@@ -17,9 +17,10 @@ public enum SyncZoomMode
 /// </summary>
 public enum SyncMoveMode
 {
-    SyncMove,        // 同步移动：拖动/滚轮移动所有图片
-    DisableSyncMove, // 关闭同步移动：拖动/滚轮只移动鼠标所在图片
-    DisableAll       // 同时关闭：关闭同步缩放和同步移动
+    DisableSyncZoom, // 关闭同步缩放
+    DisableSyncMove, // 关闭同步移动
+    DisableAll,      // 同时关闭
+    EnableAll        // 同时开启
 }
 
 public partial class Form1 : Form
@@ -57,7 +58,7 @@ public partial class Form1 : Form
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
     private bool _showZoomHelp = false; // 是否显示缩放说明
     private SyncZoomMode _syncZoomMode = SyncZoomMode.SyncAlign; // 缩放同步模式
-    private SyncMoveMode _syncMoveMode = SyncMoveMode.SyncMove; // 同步移动模式
+    private SyncMoveMode _syncMoveMode = SyncMoveMode.EnableAll; // 同步移动模式
     private float[] _zoomLevels; // 关闭同步缩放时，每张图独立的缩放级别
     private int _dragTargetIndex = -1; // 关闭同步移动时，拖动/滚轮移动的目标图片索引
     private bool _rightClickMenuEnabled = true; // 是否启用右键菜单
@@ -1084,7 +1085,7 @@ public partial class Form1 : Form
         btnX += syncZoomBtnW + 2;
         int syncMoveBtnW = 96;
         _btnSyncMove = new Rectangle(btnX, 0, syncMoveBtnW, TitleBarHeight);
-        bool syncMoveActive = _syncMoveMode == SyncMoveMode.SyncMove;
+        bool syncMoveActive = _syncMoveMode == SyncMoveMode.EnableAll;
         Color syncMoveBg = syncMoveActive ? _colors.TitleBarBtnActiveBg :
                            _hoverSyncMove ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var syncMoveBgBrush = new SolidBrush(syncMoveBg))
@@ -1093,9 +1094,10 @@ public partial class Form1 : Form
         using var syncMoveFgBrush = new SolidBrush(_colors.TitleBarFg);
         string syncMoveLabel = _syncMoveMode switch
         {
-            SyncMoveMode.SyncMove => "同步移动",
+            SyncMoveMode.DisableSyncZoom => "关闭同步缩放",
             SyncMoveMode.DisableSyncMove => "关闭同步移动",
-            _ => "同时关闭"
+            SyncMoveMode.DisableAll => "同时关闭",
+            _ => "同时开启"
         };
         var syncMoveLabelSize = g.MeasureString(syncMoveLabel, syncMoveFont);
         g.DrawString(syncMoveLabel, syncMoveFont, syncMoveFgBrush,
@@ -1281,8 +1283,9 @@ public partial class Form1 : Form
             "",
             "同步移动模式说明:",
             "",
-            "【同步移动】",
-            "拖动和滚轮移动时，所有图片同步移动。",
+            "【关闭同步缩放】",
+            "Alt+滚轮缩放时，只缩放鼠标所在的图片。",
+            "拖动和滚轮移动行为不变。",
             "",
             "【关闭同步移动】",
             "拖动和滚轮移动时，只移动鼠标所在的图片。",
@@ -1291,7 +1294,10 @@ public partial class Form1 : Form
             "【同时关闭】",
             "同时关闭同步缩放和同步移动。",
             "Alt+滚轮只缩放鼠标所在的图片，",
-            "拖动和滚轮只移动鼠标所在的图片。"
+            "拖动和滚轮只移动鼠标所在的图片。",
+            "",
+            "【同时开启】",
+            "恢复默认：所有操作同步进行。"
         };
 
         float boxWidth = 310f;
@@ -1436,9 +1442,10 @@ public partial class Form1 : Form
             {
                 _syncMoveMode = _syncMoveMode switch
                 {
-                    SyncMoveMode.SyncMove => SyncMoveMode.DisableSyncMove,
+                    SyncMoveMode.DisableSyncZoom => SyncMoveMode.DisableSyncMove,
                     SyncMoveMode.DisableSyncMove => SyncMoveMode.DisableAll,
-                    _ => SyncMoveMode.SyncMove
+                    SyncMoveMode.DisableAll => SyncMoveMode.EnableAll,
+                    _ => SyncMoveMode.DisableSyncZoom
                 };
                 // 切换到关闭同步缩放模式时，将当前全局缩放级别同步到各图
                 if (IsSyncZoomDisabled())
@@ -1922,9 +1929,9 @@ public partial class Form1 : Form
     }
 
     /// <summary>
-    /// 是否关闭了同步缩放（同步移动模式为"同时关闭"时也关闭同步缩放）
+    /// 是否关闭了同步缩放（同步移动模式为"关闭同步缩放"或"同时关闭"时关闭）
     /// </summary>
-    private bool IsSyncZoomDisabled() => _syncMoveMode == SyncMoveMode.DisableAll;
+    private bool IsSyncZoomDisabled() => _syncMoveMode == SyncMoveMode.DisableSyncZoom || _syncMoveMode == SyncMoveMode.DisableAll;
 
     /// <summary>
     /// 是否关闭了同步移动
