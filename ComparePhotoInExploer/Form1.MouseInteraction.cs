@@ -330,6 +330,19 @@ public partial class Form1
             return;
         }
 
+        // 拖拽分割线调整视窗大小
+        if (e.Button == MouseButtons.Left && e.Location.Y >= TitleBarHeight)
+        {
+            var (isVertical, splitterIdx, rowOrCol) = HitTestSplitter(e.Location);
+            if (splitterIdx >= 0)
+            {
+                StartSplitterDrag(isVertical, splitterIdx, rowOrCol);
+                _lastMousePos = e.Location;
+                this.Capture = true;
+                return;
+            }
+        }
+
         // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
@@ -377,6 +390,53 @@ public partial class Form1
                 this.Cursor = Cursors.SizeNS;
             else if (this.Cursor != Cursors.Default && this.Cursor != Cursors.Hand)
                 this.Cursor = Cursors.Default;
+        }
+
+        // 分割线拖动中
+        if (_isSplitterDragging)
+        {
+            float deltaX = e.X - _lastMousePos.X;
+            float deltaY = e.Y - _lastMousePos.Y;
+            _lastMousePos = e.Location;
+            UpdateSplitterDrag(deltaX, deltaY);
+            UpdateBaseZoom();
+            this.Invalidate();
+            return;
+        }
+
+        // 分割线悬停检测（非拖动状态下）
+        if (!_isDragging && !_isTabSwapping && e.Location.Y >= TitleBarHeight)
+        {
+            var (isVertical, splitterIdx, rowOrCol) = HitTestSplitter(e.Location);
+            bool splitterChanged = splitterIdx != _hoverSplitterIndex || (splitterIdx >= 0 && isVertical != _hoverSplitterIsVertical)
+                || (splitterIdx >= 0 && isVertical && rowOrCol != _hoverSplitterRow)
+                || (splitterIdx >= 0 && !isVertical && rowOrCol != _hoverSplitterCol);
+            if (splitterChanged)
+            {
+                _hoverSplitterIndex = splitterIdx;
+                _hoverSplitterIsVertical = isVertical;
+                if (isVertical)
+                    _hoverSplitterRow = splitterIdx >= 0 ? rowOrCol : -1;
+                else
+                    _hoverSplitterCol = splitterIdx >= 0 ? rowOrCol : -1;
+                if (splitterIdx >= 0)
+                    this.Cursor = GetSplitterCursor(isVertical);
+                else if (this.Cursor == Cursors.SizeWE || this.Cursor == Cursors.SizeNS)
+                    this.Cursor = Cursors.Default;
+                this.Invalidate();
+            }
+            // 悬停在分割线上时，Shift状态变化需要重绘（高亮范围改变）
+            else if (splitterIdx >= 0)
+            {
+                this.Invalidate();
+            }
+        }
+        else if (_hoverSplitterIndex >= 0)
+        {
+            _hoverSplitterIndex = -1;
+            _hoverSplitterRow = -1;
+            _hoverSplitterCol = -1;
+            this.Invalidate();
         }
 
         // 标题栏悬停效果
@@ -507,6 +567,15 @@ public partial class Form1
 
     private void Form1_MouseUp(object? sender, MouseEventArgs e)
     {
+        // 分割线拖动结束
+        if (_isSplitterDragging)
+        {
+            EndSplitterDrag();
+            this.Capture = false;
+            this.Invalidate();
+            return;
+        }
+
         // Tab互换拖动释放：交换图片
         if (_isTabSwapping)
         {

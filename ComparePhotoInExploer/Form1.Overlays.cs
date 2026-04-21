@@ -56,6 +56,8 @@ public partial class Form1
             "- 鼠标左键拖动: 同步移动所有图片",
             "- Shift+左键拖动: 只移动鼠标所在的那张图片",
             "- Tab+左键拖动: 将图片拖到另一张图片位置互换",
+            "- 拖动分割线: 调整分割线两侧所有列/行的视窗大小",
+            "- Shift+拖动分割线: 只调整分割线两侧两张图片的视窗大小（可产生不对齐布局）",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
             "- Alt+滚轮: 以鼠标指针为中心缩放图片",
@@ -63,7 +65,7 @@ public partial class Form1
             "- Esc / Ctrl+W: 关闭当前界面或程序",
         };
 
-        float boxWidth = 380f;
+        float boxWidth = 420f;
         float boxHeight = instructions.Length * 22 + 20;
         int topOffset = TitleBarHeight;
         using (var bgBrush = new SolidBrush(_colors.HelpPanelBg))

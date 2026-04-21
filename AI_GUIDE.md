@@ -9,11 +9,12 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 - `Form1.MouseInteraction.cs`：鼠标交互——MouseDown/Move/Up、标题栏按钮点击与悬停检测、历史记录栏悬停、拖动/Shift拖动/重置偏移交互
 - `Form1.Zoom.cs`：缩放与滚轮——MouseWheel 事件、同步对齐/独立缩放/关闭同步缩放三种模式、IsSyncZoomDisabled/IsSyncMoveDisabled、GetEffectiveZoom
 - `Form1.History.cs`：历史记录管理（控制器层）——SaveCurrentToHistory、OnHistoryGroupClicked、OnHistoryGroupDeleteRequested、ClearCurrentImages；协调 HistoryData（数据层）和 HistoryBarData（视图层）
-- `Form1.ImageLayout.cs`：图片加载与布局——GetGridLayout、LoadNewGroup、LoadImages、CalculateFitZoom、GetCellRect、HitTest、UpdateBaseZoom
+- `Form1.ImageLayout.cs`：图片加载与布局——GetGridLayout、LoadNewGroup、LoadImages、CalculateFitZoom、GetCellRect（含分割线偏移）、HitTest、UpdateBaseZoom、SwapImages
 - `Form1.Keyboard.cs`：键盘处理——KeyDown、ProcessCmdKey（Ctrl+W）、IsAltPressed
 - `Form1.TitleBar.cs`：自绘标题栏——标题栏按钮绘制（历史记录、操作说明、主题、同步缩放、同步移动、缩放说明、右键菜单、重置偏移、最小化/最大化/关闭）
 - `Form1.Overlays.cs`：浮层面板与提示——DrawHelpPanel、DrawZoomHelpPanel、DrawEmptyHint、DrawDropOverlay
 - `Form1.DragDrop.cs`：拖放支持——DragEnter/Over/Leave/Drop 事件处理
+- `Form1.SplitterDrag.cs`：分割线拖动——拖拽网格分割线调整视窗大小（普通模式调整整条分割线=所有列/行变化，Shift模式只调整分割线两侧两张图片=单元格级别，可产生不对齐布局）、单元格级别比例管理（_cellWidthRatios/_cellHeightRatios）、HitTest/Clamp/归一化、华容道空区域检测（GetGapRegions）、Shift实时检测（IsShiftPressed）
 - `Form1.Designer.cs`：窗体设计器生成的代码（一般无需手动修改）
 
 ## Helpers/（辅助工具类）
@@ -43,6 +44,7 @@ AI 在制作或修改功能时，优先查看或修改以下文件：
 | 缩放逻辑 | `ZoomCalculator.cs` → `Form1.Zoom.cs`（MouseWheel） |
 | 拖动/移动逻辑 | `Form1.MouseInteraction.cs` → `Form1.Zoom.cs` |
 | 图片互换（Tab+拖动） | `Form1.MouseInteraction.cs`（Tab拖动交互） → `Form1.ImageLayout.cs`（SwapImages） → `Form1.Paint.cs`（高亮绘制） |
+| 分割线拖动（调整视窗） | `Form1.SplitterDrag.cs`（分割线逻辑） → `Form1.MouseInteraction.cs`（拖动交互） → `Form1.Paint.cs`（高亮绘制） |
 | 主题/配色 | `ThemeColorSet.cs` → `Form1.cs`（ApplyTheme） → `AppSettings.cs` |
 | 历史记录 | `Form1.History.cs` → `HistoryData.cs` → `HistoryBarData.cs` |
 | 右键菜单 | `Helpers/RightClickMenuHelper.cs` → `AppSettings.cs` |

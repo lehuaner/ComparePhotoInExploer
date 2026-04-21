@@ -124,6 +124,9 @@ public partial class Form1 : Form
         // 计算网格尺寸
         (_cols, _rows) = GetGridLayout(Math.Max(1, _imageCount));
 
+        // 初始化分割线偏移
+        InitSplitters();
+
         // 初始化每张图的数据
         _images = new Image?[Math.Max(1, _imageCount)];
         _baseZooms = new float[Math.Max(1, _imageCount)];
@@ -348,6 +351,9 @@ public partial class Form1 : Form
             _restoreBounds = this.Bounds;
         }
         ApplyRoundCorner();
+        // 窗口大小变化时，重新约束分割线偏移
+        ClampAllColSplits();
+        ClampAllRowSplits();
         UpdateBaseZoom();
         this.Invalidate();
     }

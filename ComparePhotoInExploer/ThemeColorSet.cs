@@ -29,6 +29,7 @@ public class ThemeColorSet
 
     // 网格分割线
     public Color GridLineColor { get; init; }
+    public Color SplitterHoverColor { get; init; }
 
     // 历史记录覆盖层
     public Color HistoryOverlayBg { get; init; }
@@ -84,6 +85,7 @@ public class ThemeColorSet
         CheckerDark = Color.FromArgb(42, 42, 42),
 
         GridLineColor = Color.FromArgb(60, 60, 60),
+        SplitterHoverColor = Color.FromArgb(100, 149, 237),
 
         HistoryOverlayBg = Color.FromArgb(200, 24, 24, 24),
         HistoryBorder = Color.FromArgb(80, 80, 80),
@@ -134,6 +136,7 @@ public class ThemeColorSet
         CheckerDark = Color.LightGray,
 
         GridLineColor = Color.FromArgb(180, 180, 180),
+        SplitterHoverColor = Color.FromArgb(100, 149, 237),
 
         HistoryOverlayBg = Color.FromArgb(220, 245, 245, 245),
         HistoryBorder = Color.FromArgb(180, 180, 180),

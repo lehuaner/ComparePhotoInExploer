@@ -26,7 +26,11 @@ public partial class Form1
 
             if (_imageCount > 0)
             {
-                // 图片区域（不因历史记录展开而偏移）
+                // 先填充整个图片区域背景（防止分割线移动后格子间出现间隙）
+                using var bgBrush = new SolidBrush(_colors.CheckerDark);
+                e.Graphics.FillRectangle(bgBrush, 0, TitleBarHeight, this.ClientSize.Width, this.ClientSize.Height - TitleBarHeight);
+
+                // 绘制每个格子的棋盘格背景和图片
                 int totalCells = _cols * _rows;
                 for (int i = 0; i < totalCells; i++)
                 {
@@ -42,16 +46,57 @@ public partial class Form1
                     }
                 }
 
-                // 绘制网格分割线
+                // 绘制网格分割线（使用单元格级别的位置）
                 using var pen = new Pen(_colors.GridLineColor, 2);
-                int topOffset = TitleBarHeight;
-                int availH = this.ClientSize.Height - topOffset;
-                int cellW = this.ClientSize.Width / _cols;
-                int cellH = availH / _rows;
-                for (int c = 1; c < _cols; c++)
-                    e.Graphics.DrawLine(pen, c * cellW, topOffset, c * cellW, this.ClientSize.Height);
-                for (int r = 1; r < _rows; r++)
-                    e.Graphics.DrawLine(pen, 0, topOffset + r * cellH, this.ClientSize.Width, topOffset + r * cellH);
+                bool shiftHeld = IsShiftPressed();
+
+                // 垂直分割线：逐行绘制
+                for (int c = 0; c < _cols - 1; c++)
+                {
+                    for (int r = 0; r < _rows; r++)
+                    {
+                        int cellIdx = r * _cols + c;
+                        float lineX = GetCellLeft(cellIdx) + GetCellWidth(cellIdx);
+                        float lineTop = GetCellTop(cellIdx);
+                        float lineBottom = lineTop + GetCellHeight(cellIdx);
+
+                        // 普通模式：整条高亮；Shift模式：只高亮一节
+                        bool isHovered = _hoverSplitterIsVertical && _hoverSplitterIndex == c
+                            && (shiftHeld ? _hoverSplitterRow == r : true);
+                        var linePen = isHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(linePen, (int)lineX, (int)lineTop, (int)lineX, (int)lineBottom);
+                        if (isHovered) linePen.Dispose();
+                    }
+                }
+
+                // 水平分割线：逐列绘制
+                for (int r = 0; r < _rows - 1; r++)
+                {
+                    for (int c = 0; c < _cols; c++)
+                    {
+                        int cellIdx = r * _cols + c;
+                        float lineY = GetCellTop(cellIdx) + GetCellHeight(cellIdx);
+                        float lineLeft = GetCellLeft(cellIdx);
+                        float lineRight = lineLeft + GetCellWidth(cellIdx);
+
+                        // 普通模式：整条高亮；Shift模式：只高亮一节
+                        bool isHovered = !_hoverSplitterIsVertical && _hoverSplitterIndex == r
+                            && (shiftHeld ? _hoverSplitterCol == c : true);
+                        var linePen = isHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(linePen, (int)lineLeft, (int)lineY, (int)lineRight, (int)lineY);
+                        if (isHovered) linePen.Dispose();
+                    }
+                }
+
+                // 填充华容道空区域（Shift拖动后单元格边界不对齐产生的未覆盖区域）
+                var gapRegions = GetGapRegions();
+                if (gapRegions.Count > 0)
+                {
+                    foreach (var gap in gapRegions)
+                    {
+                        e.Graphics.FillRectangle(_checkerBrush!, gap.X, gap.Y, gap.Width, gap.Height);
+                    }
+                }
 
                 // Tab互换拖动模式：绘制目标位置高亮边框和源位置半透明覆盖
                 if (_isTabSwapping)

@@ -51,6 +51,8 @@ public partial class Form1
         _showHelp = false;
         _shiftDragIndex = -1;
         _resetOverlay.Hide();
+        InitSplitters();
+        ResetSplitters();
 
         this.Text = $"图片对比 ({_imageCount}张)";
 
@@ -93,18 +95,15 @@ public partial class Form1
     }
 
     /// <summary>
-    /// 获取第 i 张图的绘制区域（仅扣除标题栏）
+    /// 获取第 i 张图的绘制区域（仅扣除标题栏，含分割线偏移）
     /// </summary>
     private Rectangle GetCellRect(int index)
     {
-        int topOffset = TitleBarHeight;
-        int availW = Math.Max(1, this.ClientSize.Width);
-        int availH = Math.Max(1, this.ClientSize.Height - topOffset);
-        int cellW = Math.Max(1, availW / _cols);
-        int cellH = Math.Max(1, availH / _rows);
-        int col = index % _cols;
-        int row = index / _cols;
-        return new Rectangle(col * cellW, topOffset + row * cellH, cellW, cellH);
+        float x = GetCellLeft(index);
+        float y = GetCellTop(index);
+        float w = GetCellWidth(index);
+        float h = GetCellHeight(index);
+        return new Rectangle((int)x, (int)y, Math.Max(1, (int)w), Math.Max(1, (int)h));
     }
 
     private int HitTest(PointF screenPos)
