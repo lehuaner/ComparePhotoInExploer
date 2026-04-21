@@ -3,6 +3,16 @@ using System.Diagnostics;
 
 namespace ComparePhotoInExploer;
 
+/// <summary>
+/// 缩放同步模式
+/// </summary>
+public enum SyncZoomMode
+{
+    SyncAlign,       // 同步对齐：所有图片缩放并对齐到鼠标位置
+    IndependentZoom, // 独立缩放：所有图片同步缩放，但各图以自身比例位置为缩放中心
+    DisableSyncZoom  // 关闭同步：关闭同步缩放，各图独立缩放，但仍然同步移动
+}
+
 public partial class Form1 : Form
 {
     private string[] _imagePaths;
@@ -37,7 +47,8 @@ public partial class Form1 : Form
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
     private bool _showZoomHelp = false; // 是否显示缩放说明
-    private bool _syncZoomPosition = true; // 缩放时是否将被动图片对齐到主动图片鼠标所指位置
+    private SyncZoomMode _syncZoomMode = SyncZoomMode.SyncAlign; // 缩放同步模式
+    private float[] _zoomLevels; // 关闭同步模式时，每张图独立的缩放级别
     private bool _rightClickMenuEnabled = true; // 是否启用右键菜单
     private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
@@ -128,10 +139,12 @@ public partial class Form1 : Form
         _baseZooms = new float[Math.Max(1, _imageCount)];
         _offsets = new PointF[Math.Max(1, _imageCount)];
         _manualOffsets = new PointF[Math.Max(1, _imageCount)];
+        _zoomLevels = new float[Math.Max(1, _imageCount)];
         for (int i = 0; i < _offsets.Length; i++)
         {
             _offsets[i] = new PointF(0, 0);
             _manualOffsets[i] = new PointF(0, 0);
+            _zoomLevels[i] = 1.0f;
         }
 
         // 无边框 + 双缓冲
@@ -619,6 +632,7 @@ public partial class Form1 : Form
         {
             _offsets[i] = new PointF(0, 0);
             _manualOffsets[i] = new PointF(0, 0);
+            _zoomLevels[i] = 1.0f;
         }
         
         this.Text = "图片对比";
@@ -681,10 +695,12 @@ public partial class Form1 : Form
         _baseZooms = new float[_imageCount];
         _offsets = new PointF[_imageCount];
         _manualOffsets = new PointF[_imageCount];
+        _zoomLevels = new float[_imageCount];
         for (int i = 0; i < _imageCount; i++)
         {
             _offsets[i] = new PointF(0, 0);
             _manualOffsets[i] = new PointF(0, 0);
+            _zoomLevels[i] = 1.0f;
         }
 
         _zoomLevel = 1.0f;
@@ -785,7 +801,11 @@ public partial class Form1 : Form
         }
     }
 
-    private float GetEffectiveZoom(int index) => _baseZooms[index] * _zoomLevel;
+    private float GetEffectiveZoom(int index)
+    {
+        float level = _syncZoomMode == SyncZoomMode.DisableSyncZoom ? _zoomLevels[index] : _zoomLevel;
+        return _baseZooms[index] * level;
+    }
 
     private void Form1_KeyDown(object? sender, KeyEventArgs e)
     {
@@ -1036,13 +1056,19 @@ public partial class Form1 : Form
         btnX += themeBtnW + 2;
         int syncZoomBtnW = 80;
         _btnSyncZoom = new Rectangle(btnX, 0, syncZoomBtnW, TitleBarHeight);
-        Color syncZoomBg = _syncZoomPosition ? _colors.TitleBarBtnActiveBg :
+        bool syncZoomActive = _syncZoomMode == SyncZoomMode.SyncAlign;
+        Color syncZoomBg = syncZoomActive ? _colors.TitleBarBtnActiveBg :
                            _hoverSyncZoom ? _colors.TitleBarBtnHoverBg : Color.Transparent;
         using (var syncZoomBgBrush = new SolidBrush(syncZoomBg))
             g.FillRectangle(syncZoomBgBrush, _btnSyncZoom);
         using var syncZoomFont = new Font("Microsoft YaHei UI", 9F);
         using var syncZoomFgBrush = new SolidBrush(_colors.TitleBarFg);
-        string syncZoomLabel = _syncZoomPosition ? "同步对齐" : "独立缩放";
+        string syncZoomLabel = _syncZoomMode switch
+        {
+            SyncZoomMode.SyncAlign => "同步对齐",
+            SyncZoomMode.IndependentZoom => "独立缩放",
+            _ => "关闭同步"
+        };
         var syncZoomLabelSize = g.MeasureString(syncZoomLabel, syncZoomFont);
         g.DrawString(syncZoomLabel, syncZoomFont, syncZoomFgBrush,
             _btnSyncZoom.Left + (_btnSyncZoom.Width - syncZoomLabelSize.Width) / 2,
@@ -1223,7 +1249,11 @@ public partial class Form1 : Form
             "例如：主图以1/4处为缩放中心，",
             "从图也以其自身1/4处为缩放中心，",
             "两图缩放中心的比例位置相同，",
-            "但不会移动到鼠标屏幕位置。"
+            "但不会移动到鼠标屏幕位置。",
+            "",
+            "【关闭同步】",
+            "Alt+滚轮缩放时，只缩放鼠标所在的图片，",
+            "其他图片不受影响。拖动仍为同步移动。"
         };
 
         float boxWidth = 310f;
@@ -1357,7 +1387,23 @@ public partial class Form1 : Form
             // 同步缩放位置按钮
             if (_btnSyncZoom.Contains(e.Location))
             {
-                _syncZoomPosition = !_syncZoomPosition;
+                _syncZoomMode = _syncZoomMode switch
+                {
+                    SyncZoomMode.SyncAlign => SyncZoomMode.IndependentZoom,
+                    SyncZoomMode.IndependentZoom => SyncZoomMode.DisableSyncZoom,
+                    _ => SyncZoomMode.SyncAlign
+                };
+                // 从同步切换到关闭同步时，将当前全局缩放级别同步到各图
+                if (_syncZoomMode == SyncZoomMode.DisableSyncZoom)
+                {
+                    for (int i = 0; i < _zoomLevels.Length; i++)
+                        _zoomLevels[i] = _zoomLevel;
+                }
+                // 从关闭同步切换到同步时，将第一张图的缩放级别作为全局缩放级别
+                else if (_syncZoomMode != SyncZoomMode.DisableSyncZoom && _zoomLevels.Length > 0)
+                {
+                    _zoomLevel = _zoomLevels[0];
+                }
                 this.Invalidate();
                 return;
             }
@@ -1933,58 +1979,86 @@ public partial class Form1 : Form
         else if (IsAltPressed())
         {
             float zoomFactor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
-            float oldZoomLevel = _zoomLevel;
-            float newZoomLevel = _zoomLevel * zoomFactor;
-
-            if (newZoomLevel < 0.01f || newZoomLevel > 100f)
-                return;
-
             PointF mousePos = e.Location;
             int activeIdx = HitTest(mousePos);
-            if (activeIdx < 0 || activeIdx >= _images.Length || _images[activeIdx] == null)
+
+            if (_syncZoomMode == SyncZoomMode.DisableSyncZoom)
             {
+                // 关闭同步模式：只缩放鼠标所在的那张图片
+                if (activeIdx < 0 || activeIdx >= _imageCount || _images[activeIdx] == null)
+                {
+                    this.Invalidate();
+                    return;
+                }
+
+                float oldZoomLevel = _zoomLevels[activeIdx];
+                float newZoomLevel = oldZoomLevel * zoomFactor;
+                if (newZoomLevel < 0.01f || newZoomLevel > 100f)
+                    return;
+
+                Rectangle activeRect = GetCellRect(activeIdx);
+                Size activeImgSize = _images[activeIdx]!.Size;
+                float oldEff = _baseZooms[activeIdx] * oldZoomLevel;
+                float newEff = _baseZooms[activeIdx] * newZoomLevel;
+
+                PointF norm = ScreenToNormalized(mousePos, activeRect, oldEff, _offsets[activeIdx], activeImgSize);
+                _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEff, newEff, _offsets[activeIdx], activeImgSize);
+                _zoomLevels[activeIdx] = newZoomLevel;
+            }
+            else
+            {
+                // 同步对齐 / 独立缩放模式
+                float oldZoomLevel = _zoomLevel;
+                float newZoomLevel = _zoomLevel * zoomFactor;
+
+                if (newZoomLevel < 0.01f || newZoomLevel > 100f)
+                    return;
+
+                if (activeIdx < 0 || activeIdx >= _images.Length || _images[activeIdx] == null)
+                {
+                    _zoomLevel = newZoomLevel;
+                    this.Invalidate();
+                    return;
+                }
+
+                Rectangle activeRect = GetCellRect(activeIdx);
+                Size activeImgSize = _images[activeIdx]!.Size;
+                float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
+                float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
+
+                // active图片：直接使用完整offset，确保以鼠标实际所指位置为基准缩放
+                PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
+                _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
+
+                float activeLocalX = mousePos.X - activeRect.Left;
+                float activeLocalY = mousePos.Y - activeRect.Top;
+
+                for (int i = 0; i < _imageCount; i++)
+                {
+                    if (i == activeIdx || _images[i] == null) continue;
+
+                    Rectangle passiveRect = GetCellRect(i);
+                    Size passiveImgSize = _images[i]!.Size;
+                    float oldEffPassive = _baseZooms[i] * oldZoomLevel;
+                    float newEffPassive = _baseZooms[i] * newZoomLevel;
+
+                    if (_syncZoomMode == SyncZoomMode.SyncAlign)
+                    {
+                        // 同步对齐：将被动图片的同一归一化位置移到与主动图片鼠标位置对应的地方
+                        PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
+                        var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
+                        _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
+                    }
+                    else
+                    {
+                        // 独立缩放：被动图片以与主动图片相同比例位置为缩放中心
+                        // 即主图1/4处为缩放中心，从图也以其1/4处为缩放中心
+                        _offsets[i] = ZoomAtNormalized(norm, passiveRect, oldEffPassive, newEffPassive, _offsets[i], passiveImgSize);
+                    }
+                }
+
                 _zoomLevel = newZoomLevel;
-                this.Invalidate();
-                return;
             }
-
-            Rectangle activeRect = GetCellRect(activeIdx);
-            Size activeImgSize = _images[activeIdx]!.Size;
-            float oldEffActive = _baseZooms[activeIdx] * oldZoomLevel;
-            float newEffActive = _baseZooms[activeIdx] * newZoomLevel;
-
-            // active图片：直接使用完整offset，确保以鼠标实际所指位置为基准缩放
-            PointF norm = ScreenToNormalized(mousePos, activeRect, oldEffActive, _offsets[activeIdx], activeImgSize);
-            _offsets[activeIdx] = ZoomAtNormalized(norm, activeRect, oldEffActive, newEffActive, _offsets[activeIdx], activeImgSize);
-
-            float activeLocalX = mousePos.X - activeRect.Left;
-            float activeLocalY = mousePos.Y - activeRect.Top;
-
-            for (int i = 0; i < _imageCount; i++)
-            {
-                if (i == activeIdx || _images[i] == null) continue;
-
-                Rectangle passiveRect = GetCellRect(i);
-                Size passiveImgSize = _images[i]!.Size;
-                float oldEffPassive = _baseZooms[i] * oldZoomLevel;
-                float newEffPassive = _baseZooms[i] * newZoomLevel;
-
-                if (_syncZoomPosition)
-                {
-                    // 同步对齐：将被动图片的同一归一化位置移到与主动图片鼠标位置对应的地方
-                    PointF targetPos = new PointF(passiveRect.Left + activeLocalX, passiveRect.Top + activeLocalY);
-                    var computed = ZoomAndMoveToTarget(norm, passiveRect, newEffPassive, passiveImgSize, targetPos);
-                    _offsets[i] = new PointF(computed.X + _manualOffsets[i].X, computed.Y + _manualOffsets[i].Y);
-                }
-                else
-                {
-                    // 独立缩放：被动图片以与主动图片相同比例位置为缩放中心
-                    // 即主图1/4处为缩放中心，从图也以其1/4处为缩放中心
-                    _offsets[i] = ZoomAtNormalized(norm, passiveRect, oldEffPassive, newEffPassive, _offsets[i], passiveImgSize);
-                }
-            }
-
-            _zoomLevel = newZoomLevel;
         }
         else
         {
