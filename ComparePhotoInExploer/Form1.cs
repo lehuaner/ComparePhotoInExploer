@@ -9,8 +9,17 @@ namespace ComparePhotoInExploer;
 public enum SyncZoomMode
 {
     SyncAlign,       // 同步对齐：所有图片缩放并对齐到鼠标位置
-    IndependentZoom, // 独立缩放：所有图片同步缩放，但各图以自身比例位置为缩放中心
-    DisableSyncZoom  // 关闭同步：关闭同步缩放，各图独立缩放，但仍然同步移动
+    IndependentZoom  // 独立缩放：所有图片同步缩放，但各图以自身比例位置为缩放中心
+}
+
+/// <summary>
+/// 同步移动模式
+/// </summary>
+public enum SyncMoveMode
+{
+    SyncMove,        // 同步移动：拖动/滚轮移动所有图片
+    DisableSyncMove, // 关闭同步移动：拖动/滚轮只移动鼠标所在图片
+    DisableAll       // 同时关闭：关闭同步缩放和同步移动
 }
 
 public partial class Form1 : Form
@@ -42,13 +51,15 @@ public partial class Form1 : Form
 
     // 自绘标题栏
     public const int TitleBarHeight = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp, _btnRightClickMenu;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp, _hoverRightClickMenu;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp, _btnRightClickMenu, _btnSyncMove;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp, _hoverRightClickMenu, _hoverSyncMove;
     private bool _isWindowMaximized = false;
     private bool _showHelp = false; // 是否显示按键说明（与历史记录互斥）
     private bool _showZoomHelp = false; // 是否显示缩放说明
     private SyncZoomMode _syncZoomMode = SyncZoomMode.SyncAlign; // 缩放同步模式
-    private float[] _zoomLevels; // 关闭同步模式时，每张图独立的缩放级别
+    private SyncMoveMode _syncMoveMode = SyncMoveMode.SyncMove; // 同步移动模式
+    private float[] _zoomLevels; // 关闭同步缩放时，每张图独立的缩放级别
+    private int _dragTargetIndex = -1; // 关闭同步移动时，拖动/滚轮移动的目标图片索引
     private bool _rightClickMenuEnabled = true; // 是否启用右键菜单
     private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
@@ -803,7 +814,7 @@ public partial class Form1 : Form
 
     private float GetEffectiveZoom(int index)
     {
-        float level = _syncZoomMode == SyncZoomMode.DisableSyncZoom ? _zoomLevels[index] : _zoomLevel;
+        float level = IsSyncZoomDisabled() ? _zoomLevels[index] : _zoomLevel;
         return _baseZooms[index] * level;
     }
 
@@ -1052,7 +1063,7 @@ public partial class Form1 : Form
             _btnTheme.Left + (_btnTheme.Width - themeLabelSize.Width) / 2,
             _btnTheme.Top + (_btnTheme.Height - themeLabelSize.Height) / 2);
 
-        // 同步缩放位置按钮
+        // 同步缩放模式按钮
         btnX += themeBtnW + 2;
         int syncZoomBtnW = 80;
         _btnSyncZoom = new Rectangle(btnX, 0, syncZoomBtnW, TitleBarHeight);
@@ -1063,19 +1074,36 @@ public partial class Form1 : Form
             g.FillRectangle(syncZoomBgBrush, _btnSyncZoom);
         using var syncZoomFont = new Font("Microsoft YaHei UI", 9F);
         using var syncZoomFgBrush = new SolidBrush(_colors.TitleBarFg);
-        string syncZoomLabel = _syncZoomMode switch
-        {
-            SyncZoomMode.SyncAlign => "同步对齐",
-            SyncZoomMode.IndependentZoom => "独立缩放",
-            _ => "关闭同步"
-        };
+        string syncZoomLabel = _syncZoomMode == SyncZoomMode.SyncAlign ? "同步对齐" : "独立缩放";
         var syncZoomLabelSize = g.MeasureString(syncZoomLabel, syncZoomFont);
         g.DrawString(syncZoomLabel, syncZoomFont, syncZoomFgBrush,
             _btnSyncZoom.Left + (_btnSyncZoom.Width - syncZoomLabelSize.Width) / 2,
             _btnSyncZoom.Top + (_btnSyncZoom.Height - syncZoomLabelSize.Height) / 2);
 
+        // 同步移动模式按钮
+        btnX += syncZoomBtnW + 2;
+        int syncMoveBtnW = 96;
+        _btnSyncMove = new Rectangle(btnX, 0, syncMoveBtnW, TitleBarHeight);
+        bool syncMoveActive = _syncMoveMode == SyncMoveMode.SyncMove;
+        Color syncMoveBg = syncMoveActive ? _colors.TitleBarBtnActiveBg :
+                           _hoverSyncMove ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var syncMoveBgBrush = new SolidBrush(syncMoveBg))
+            g.FillRectangle(syncMoveBgBrush, _btnSyncMove);
+        using var syncMoveFont = new Font("Microsoft YaHei UI", 9F);
+        using var syncMoveFgBrush = new SolidBrush(_colors.TitleBarFg);
+        string syncMoveLabel = _syncMoveMode switch
+        {
+            SyncMoveMode.SyncMove => "同步移动",
+            SyncMoveMode.DisableSyncMove => "关闭同步移动",
+            _ => "同时关闭"
+        };
+        var syncMoveLabelSize = g.MeasureString(syncMoveLabel, syncMoveFont);
+        g.DrawString(syncMoveLabel, syncMoveFont, syncMoveFgBrush,
+            _btnSyncMove.Left + (_btnSyncMove.Width - syncMoveLabelSize.Width) / 2,
+            _btnSyncMove.Top + (_btnSyncMove.Height - syncMoveLabelSize.Height) / 2);
+
         // 缩放说明按钮（小问号）
-        btnX += syncZoomBtnW + 1;
+        btnX += syncMoveBtnW + 1;
         _btnZoomHelp = new Rectangle(btnX, 0, 28, TitleBarHeight);
         Color zoomHelpBg = _showZoomHelp ? _colors.TitleBarBtnActiveBg :
                            _hoverZoomHelp ? _colors.TitleBarBtnHoverBg : Color.Transparent;
@@ -1251,9 +1279,19 @@ public partial class Form1 : Form
             "两图缩放中心的比例位置相同，",
             "但不会移动到鼠标屏幕位置。",
             "",
-            "【关闭同步】",
-            "Alt+滚轮缩放时，只缩放鼠标所在的图片，",
-            "其他图片不受影响。拖动仍为同步移动。"
+            "同步移动模式说明:",
+            "",
+            "【同步移动】",
+            "拖动和滚轮移动时，所有图片同步移动。",
+            "",
+            "【关闭同步移动】",
+            "拖动和滚轮移动时，只移动鼠标所在的图片。",
+            "Alt+滚轮缩放行为不变。",
+            "",
+            "【同时关闭】",
+            "同时关闭同步缩放和同步移动。",
+            "Alt+滚轮只缩放鼠标所在的图片，",
+            "拖动和滚轮只移动鼠标所在的图片。"
         };
 
         float boxWidth = 310f;
@@ -1384,23 +1422,32 @@ public partial class Form1 : Form
                 CycleTheme();
                 return;
             }
-            // 同步缩放位置按钮
+            // 同步缩放模式按钮
             if (_btnSyncZoom.Contains(e.Location))
             {
-                _syncZoomMode = _syncZoomMode switch
+                _syncZoomMode = _syncZoomMode == SyncZoomMode.SyncAlign
+                    ? SyncZoomMode.IndependentZoom
+                    : SyncZoomMode.SyncAlign;
+                this.Invalidate();
+                return;
+            }
+            // 同步移动模式按钮
+            if (_btnSyncMove.Contains(e.Location))
+            {
+                _syncMoveMode = _syncMoveMode switch
                 {
-                    SyncZoomMode.SyncAlign => SyncZoomMode.IndependentZoom,
-                    SyncZoomMode.IndependentZoom => SyncZoomMode.DisableSyncZoom,
-                    _ => SyncZoomMode.SyncAlign
+                    SyncMoveMode.SyncMove => SyncMoveMode.DisableSyncMove,
+                    SyncMoveMode.DisableSyncMove => SyncMoveMode.DisableAll,
+                    _ => SyncMoveMode.SyncMove
                 };
-                // 从同步切换到关闭同步时，将当前全局缩放级别同步到各图
-                if (_syncZoomMode == SyncZoomMode.DisableSyncZoom)
+                // 切换到关闭同步缩放模式时，将当前全局缩放级别同步到各图
+                if (IsSyncZoomDisabled())
                 {
                     for (int i = 0; i < _zoomLevels.Length; i++)
                         _zoomLevels[i] = _zoomLevel;
                 }
-                // 从关闭同步切换到同步时，将第一张图的缩放级别作为全局缩放级别
-                else if (_syncZoomMode != SyncZoomMode.DisableSyncZoom && _zoomLevels.Length > 0)
+                // 从关闭同步缩放切换回同步时，将第一张图的缩放级别作为全局缩放级别
+                else if (_zoomLevels.Length > 0)
                 {
                     _zoomLevel = _zoomLevels[0];
                 }
@@ -1647,9 +1694,16 @@ public partial class Form1 : Form
             {
                 _shiftDragIndex = HitTest(e.Location);
             }
+            else if (IsSyncMoveDisabled())
+            {
+                // 关闭同步移动时：只拖动鼠标所在的那张图片
+                _shiftDragIndex = HitTest(e.Location);
+                _dragTargetIndex = _shiftDragIndex;
+            }
             else
             {
                 _shiftDragIndex = -1;
+                _dragTargetIndex = -1;
             }
         }
     }
@@ -1691,11 +1745,12 @@ public partial class Form1 : Form
             bool newHoverSyncZoom = _btnSyncZoom.Contains(e.Location);
             bool newHoverZoomHelp = _btnZoomHelp.Contains(e.Location);
             bool newHoverRightClickMenu = _btnRightClickMenu.Contains(e.Location);
+            bool newHoverSyncMove = _btnSyncMove.Contains(e.Location);
 
             if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
                 newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme ||
                 newHoverReset != _hoverReset || newHoverSyncZoom != _hoverSyncZoom || newHoverZoomHelp != _hoverZoomHelp ||
-                newHoverRightClickMenu != _hoverRightClickMenu)
+                newHoverRightClickMenu != _hoverRightClickMenu || newHoverSyncMove != _hoverSyncMove)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
@@ -1707,6 +1762,7 @@ public partial class Form1 : Form
                 _hoverSyncZoom = newHoverSyncZoom;
                 _hoverZoomHelp = newHoverZoomHelp;
                 _hoverRightClickMenu = newHoverRightClickMenu;
+                _hoverSyncMove = newHoverSyncMove;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
             }
             return;
@@ -1754,10 +1810,16 @@ public partial class Form1 : Form
 
             if (_shiftDragIndex >= 0 && _shiftDragIndex < _imageCount)
             {
-                // Shift拖动：只移动选中的图片
+                // Shift拖动：只移动选中的图片（记录为手动偏移）
                 int i = _shiftDragIndex;
                 _offsets[i] = new PointF(_offsets[i].X + deltaX, _offsets[i].Y + deltaY);
                 _manualOffsets[i] = new PointF(_manualOffsets[i].X + deltaX, _manualOffsets[i].Y + deltaY);
+            }
+            else if (_dragTargetIndex >= 0 && _dragTargetIndex < _imageCount)
+            {
+                // 关闭同步移动：只移动鼠标所在的图片（不记录为手动偏移）
+                int i = _dragTargetIndex;
+                _offsets[i] = new PointF(_offsets[i].X + deltaX, _offsets[i].Y + deltaY);
             }
             else
             {
@@ -1777,6 +1839,7 @@ public partial class Form1 : Form
     {
         _isDragging = false;
         _shiftDragIndex = -1;
+        _dragTargetIndex = -1;
         if (_resetOverlay.IsSelecting)
         {
             _resetOverlay.EndSelection();
@@ -1857,6 +1920,16 @@ public partial class Form1 : Form
     {
         return (ModifierKeys & Keys.Alt) == Keys.Alt;
     }
+
+    /// <summary>
+    /// 是否关闭了同步缩放（同步移动模式为"同时关闭"时也关闭同步缩放）
+    /// </summary>
+    private bool IsSyncZoomDisabled() => _syncMoveMode == SyncMoveMode.DisableAll;
+
+    /// <summary>
+    /// 是否关闭了同步移动
+    /// </summary>
+    private bool IsSyncMoveDisabled() => _syncMoveMode == SyncMoveMode.DisableSyncMove || _syncMoveMode == SyncMoveMode.DisableAll;
 
     private void ToggleMaximize()
     {
@@ -1973,8 +2046,17 @@ public partial class Form1 : Form
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Width * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? step : -step;
-            for (int i = 0; i < _imageCount; i++)
-                _offsets[i] = new PointF(_offsets[i].X + delta, _offsets[i].Y);
+            if (IsSyncMoveDisabled())
+            {
+                int idx = HitTest(e.Location);
+                if (idx >= 0 && idx < _imageCount)
+                    _offsets[idx] = new PointF(_offsets[idx].X + delta, _offsets[idx].Y);
+            }
+            else
+            {
+                for (int i = 0; i < _imageCount; i++)
+                    _offsets[i] = new PointF(_offsets[i].X + delta, _offsets[i].Y);
+            }
         }
         else if (IsAltPressed())
         {
@@ -1982,9 +2064,9 @@ public partial class Form1 : Form
             PointF mousePos = e.Location;
             int activeIdx = HitTest(mousePos);
 
-            if (_syncZoomMode == SyncZoomMode.DisableSyncZoom)
+            if (IsSyncZoomDisabled())
             {
-                // 关闭同步模式：只缩放鼠标所在的那张图片
+                // 关闭同步缩放模式：只缩放鼠标所在的那张图片
                 if (activeIdx < 0 || activeIdx >= _imageCount || _images[activeIdx] == null)
                 {
                     this.Invalidate();
@@ -2065,8 +2147,17 @@ public partial class Form1 : Form
             float avgZoom = _baseZooms.Where(z => z > 0).DefaultIfEmpty(1f).Average() * _zoomLevel;
             float step = this.ClientSize.Height * 0.05f * avgZoom;
             float delta = e.Delta > 0 ? step : -step;
-            for (int i = 0; i < _imageCount; i++)
-                _offsets[i] = new PointF(_offsets[i].X, _offsets[i].Y + delta);
+            if (IsSyncMoveDisabled())
+            {
+                int idx = HitTest(e.Location);
+                if (idx >= 0 && idx < _imageCount)
+                    _offsets[idx] = new PointF(_offsets[idx].X, _offsets[idx].Y + delta);
+            }
+            else
+            {
+                for (int i = 0; i < _imageCount; i++)
+                    _offsets[i] = new PointF(_offsets[i].X, _offsets[i].Y + delta);
+            }
         }
 
         this.Invalidate();
