@@ -94,7 +94,37 @@ public partial class Form1
                 {
                     foreach (var gap in gapRegions)
                     {
-                        e.Graphics.FillRectangle(_checkerBrush!, gap.X, gap.Y, gap.Width, gap.Height);
+                        var r = gap.Rect;
+                        e.Graphics.FillRectangle(_checkerBrush!, r.X, r.Y, r.Width, r.Height);
+
+                        // 逐边绘制，悬停时对应边高亮
+                        // 左边：垂直分割线 col，行 row
+                        bool leftHovered = _hoverSplitterIsVertical && _hoverSplitterIndex == gap.Col
+                            && (shiftHeld ? _hoverSplitterRow == gap.Row : true);
+                        var leftPen = leftHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(leftPen, (int)r.X, (int)r.Y, (int)r.X, (int)(r.Y + r.Height));
+                        if (leftHovered) leftPen.Dispose();
+
+                        // 右边：垂直分割线 col，行 row+1
+                        bool rightHovered = _hoverSplitterIsVertical && _hoverSplitterIndex == gap.Col
+                            && (shiftHeld ? _hoverSplitterRow == gap.Row + 1 : true);
+                        var rightPen = rightHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(rightPen, (int)(r.X + r.Width), (int)r.Y, (int)(r.X + r.Width), (int)(r.Y + r.Height));
+                        if (rightHovered) rightPen.Dispose();
+
+                        // 上边：水平分割线 row，列 col+1
+                        bool topHovered = !_hoverSplitterIsVertical && _hoverSplitterIndex == gap.Row
+                            && (shiftHeld ? _hoverSplitterCol == gap.Col + 1 : true);
+                        var topPen = topHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(topPen, (int)r.X, (int)r.Y, (int)(r.X + r.Width), (int)r.Y);
+                        if (topHovered) topPen.Dispose();
+
+                        // 下边：水平分割线 row，列 col
+                        bool bottomHovered = !_hoverSplitterIsVertical && _hoverSplitterIndex == gap.Row
+                            && (shiftHeld ? _hoverSplitterCol == gap.Col : true);
+                        var bottomPen = bottomHovered ? new Pen(_colors.SplitterHoverColor, 2) : pen;
+                        e.Graphics.DrawLine(bottomPen, (int)r.X, (int)(r.Y + r.Height), (int)(r.X + r.Width), (int)(r.Y + r.Height));
+                        if (bottomHovered) bottomPen.Dispose();
                     }
                 }
 

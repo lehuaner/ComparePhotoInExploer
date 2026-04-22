@@ -54,6 +54,7 @@ public partial class Form1
 
     /// <summary>
     /// 检测鼠标位置是否在分割线上，返回分割线信息
+    /// 包含单元格边界上的分割线段和华容道空隙区域的延伸边框
     /// </summary>
     private (bool isVertical, int splitterIndex, int rowOrCol) HitTestSplitter(PointF pos)
     {
@@ -93,6 +94,41 @@ public partial class Form1
                 {
                     return (false, r, c);
                 }
+            }
+        }
+
+        // 检测华容道空隙区域的延伸边框
+        var gapRegions = GetGapRegions();
+        foreach (var gap in gapRegions)
+        {
+            var r = gap.Rect;
+
+            // 左边：垂直分割线 col，属于行 row（延续行 row 的垂直线）
+            if (Math.Abs(pos.X - r.X) <= SplitterHitTestRadius
+                && pos.Y >= r.Y && pos.Y <= r.Y + r.Height)
+            {
+                return (true, gap.Col, gap.Row);
+            }
+
+            // 右边：垂直分割线 col，属于行 row+1（延续行 row+1 的垂直线）
+            if (Math.Abs(pos.X - (r.X + r.Width)) <= SplitterHitTestRadius
+                && pos.Y >= r.Y && pos.Y <= r.Y + r.Height)
+            {
+                return (true, gap.Col, gap.Row + 1);
+            }
+
+            // 上边：水平分割线 row，属于列 col+1（延续列 col+1 的水平线）
+            if (Math.Abs(pos.Y - r.Y) <= SplitterHitTestRadius
+                && pos.X >= r.X && pos.X <= r.X + r.Width)
+            {
+                return (false, gap.Row, gap.Col + 1);
+            }
+
+            // 下边：水平分割线 row，属于列 col（延续列 col 的水平线）
+            if (Math.Abs(pos.Y - (r.Y + r.Height)) <= SplitterHitTestRadius
+                && pos.X >= r.X && pos.X <= r.X + r.Width)
+            {
+                return (false, gap.Row, gap.Col);
             }
         }
 
@@ -458,16 +494,31 @@ public partial class Form1
     private Cursor GetSplitterCursor(bool isVertical) => isVertical ? Cursors.SizeWE : Cursors.SizeNS;
 
     /// <summary>
-    /// 计算所有单元格区域之间的"华容道"空隙区域（Shift拖动后可能出现的未覆盖区域）
+    /// 华容道空隙区域信息（含行列索引，用于边框高亮匹配）
     /// </summary>
-    private List<RectangleF> GetGapRegions()
+    private struct GapRegion
     {
-        var gaps = new List<RectangleF>();
+        public RectangleF Rect;
+        public int Row; // 空隙所在的上行索引（r）
+        public int Col; // 空隙所在的左列索引（c）
+    }
+
+    /// <summary>
+    /// 计算所有单元格区域之间的"华容道"空隙区域（Shift拖动后可能出现的未覆盖区域）
+    /// 每个空隙对应交叉点(r,c)，其四条边分别对应：
+    /// - 左边：垂直分割线 c，行 r 的延伸
+    /// - 右边：垂直分割线 c，行 r+1 的延伸
+    /// - 上边：水平分割线 r，列 c 的延伸
+    /// - 下边：水平分割线 r，列 c+1 的延伸
+    /// </summary>
+    private List<GapRegion> GetGapRegions()
+    {
+        var gaps = new List<GapRegion>();
         if (_cols <= 1 || _rows <= 1)
             return gaps;
 
         // 收集每行各列的右边界 X 坐标
-        var rowRightEdges = new float[_rows, _cols]; // 每行每列的右边界
+        var rowRightEdges = new float[_rows, _cols];
         for (int r = 0; r < _rows; r++)
         {
             float x = 0;
@@ -480,7 +531,7 @@ public partial class Form1
         }
 
         // 收集每列各行的底边界 Y 坐标
-        var colBottomEdges = new float[_rows, _cols]; // 每列每行的底边界
+        var colBottomEdges = new float[_rows, _cols];
         for (int c = 0; c < _cols; c++)
         {
             float y = TitleBarHeight;
@@ -492,27 +543,16 @@ public partial class Form1
             }
         }
 
-        // 检测每个"交叉区域"：第 r1 行的第 c1 列右边界和第 r2 行的第 c2 列右边界之间
-        // 以及第 c1 列的第 r1 行底边界和第 c2 列的第 r2 行底边界之间形成的矩形
-        // 简化：遍历所有内部网格交叉点，检查是否有空隙
         for (int r = 0; r < _rows - 1; r++)
         {
             for (int c = 0; c < _cols - 1; c++)
             {
-                // 当前格子(r,c)的右下角
                 float rightEdge = rowRightEdges[r, c];
                 float bottomEdge = colBottomEdges[r, c];
 
-                // 右邻格子(r,c+1)的右边界 和 下邻格子(r+1,c)的底边界
-                float rightNeighborRight = rowRightEdges[r, c + 1];
-                float bottomNeighborBottom = colBottomEdges[r + 1, c];
+                float diagLeft = rowRightEdges[r + 1, c];
+                float diagTop = colBottomEdges[r, c + 1];
 
-                // 对角格子(r+1,c+1)的左上角
-                float diagLeft = rowRightEdges[r + 1, c]; // 第r+1行第c列右边界 = 第r+1行第c+1列左边界
-                float diagTop = colBottomEdges[r, c + 1];  // 第c+1列第r行底边界 = 第c+1列第r+1行顶边界
-
-                // 检查是否有空隙：中间区域
-                // 空隙区域在 (rightEdge, bottomEdge) 和 (diagLeft, diagTop) 之间
                 float gapX = Math.Min(rightEdge, diagLeft);
                 float gapY = Math.Min(bottomEdge, diagTop);
                 float gapRight = Math.Max(rightEdge, diagLeft);
@@ -523,7 +563,12 @@ public partial class Form1
 
                 if (gapW > 0.5f && gapH > 0.5f)
                 {
-                    gaps.Add(new RectangleF(gapX, gapY, gapW, gapH));
+                    gaps.Add(new GapRegion
+                    {
+                        Rect = new RectangleF(gapX, gapY, gapW, gapH),
+                        Row = r,
+                        Col = c
+                    });
                 }
             }
         }
