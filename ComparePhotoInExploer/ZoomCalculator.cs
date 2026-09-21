@@ -49,4 +49,35 @@ public static class ZoomCalculator
         float offsetY = targetScreenPos.Y - drawArea.Top - (drawArea.Height - newScaledHeight) / 2f - norm.Y * newScaledHeight;
         return new PointF(offsetX, offsetY);
     }
+
+    /// <summary>
+    /// 图片左上角在屏幕上的坐标（与 DrawImage 完全一致）
+    /// </summary>
+    public static PointF GetImageTopLeft(Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    {
+        float scaledWidth = imageSize.Width * zoom;
+        float scaledHeight = imageSize.Height * zoom;
+        float imgX = drawArea.Left + (drawArea.Width - scaledWidth) / 2f + offset.X;
+        float imgY = drawArea.Top + (drawArea.Height - scaledHeight) / 2f + offset.Y;
+        return new PointF(imgX, imgY);
+    }
+
+    /// <summary>
+    /// 屏幕坐标 -> 图片原始像素坐标（可越界，为负或超出图片尺寸）
+    /// </summary>
+    public static PointF ScreenToImagePixel(PointF screenPos, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    {
+        var tl = GetImageTopLeft(drawArea, zoom, offset, imageSize);
+        if (zoom == 0f) return new PointF(0, 0);
+        return new PointF((screenPos.X - tl.X) / zoom, (screenPos.Y - tl.Y) / zoom);
+    }
+
+    /// <summary>
+    /// 图片原始像素坐标 -> 屏幕坐标
+    /// </summary>
+    public static PointF ImagePixelToScreen(PointF imgPixel, Rectangle drawArea, float zoom, PointF offset, Size imageSize)
+    {
+        var tl = GetImageTopLeft(drawArea, zoom, offset, imageSize);
+        return new PointF(tl.X + imgPixel.X * zoom, tl.Y + imgPixel.Y * zoom);
+    }
 }

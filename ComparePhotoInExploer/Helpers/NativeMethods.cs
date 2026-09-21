@@ -54,6 +54,32 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(Keys vKey);
 
+    // P7：定时器精度 + 显示器刷新率
+    [DllImport("winmm.dll")]
+    public static extern uint timeBeginPeriod(uint period);
+
+    [DllImport("winmm.dll")]
+    public static extern uint timeEndPeriod(uint period);
+
+    [DllImport("gdi32.dll")]
+    private static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetDC(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hdc);
+
+    private const int VREFRESH = 10;
+
+    /// <summary>主显示器刷新率(Hz)，失败返回 0</summary>
+    public static int GetMonitorRefreshHz()
+    {
+        IntPtr hdc = GetDC(IntPtr.Zero);
+        try { return GetDeviceCaps(hdc, VREFRESH); }
+        finally { ReleaseDC(IntPtr.Zero, hdc); }
+    }
+
     /// <summary>
     /// 为窗口应用圆角区域
     /// </summary>

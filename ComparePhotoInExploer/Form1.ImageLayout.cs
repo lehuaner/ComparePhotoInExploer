@@ -51,6 +51,7 @@ public partial class Form1
         _showHelp = false;
         _shiftDragIndex = -1;
         _resetOverlay.Hide();
+        ClearAllMarkers();
         InitSplitters();
         ResetSplitters();
 
@@ -75,8 +76,11 @@ public partial class Form1
 
                 if (i < _imagePaths.Length)
                 {
+                    // P6：物化到内存位图，避免 DrawImage 每帧走 WIC 重复解码；
+                    // 同时修复 Image.FromStream 要求流常驻、而此处 fs 被 using 提前释放的隐患。
                     using var fs = new FileStream(_imagePaths[i], FileMode.Open, FileAccess.Read);
-                    _images[i] = Image.FromStream(fs);
+                    using var tmp = Image.FromStream(fs);
+                    _images[i] = new Bitmap(tmp);
                 }
             }
         }
@@ -152,6 +156,10 @@ public partial class Form1
 
         // 交换独立缩放级别
         (_zoomLevels[indexA], _zoomLevels[indexB]) = (_zoomLevels[indexB], _zoomLevels[indexA]);
+
+        // 重映射标记归属（标记绑定图片，随图移动）
+        foreach (var p in _points) { if (p.Owner == indexA) p.Owner = indexB; else if (p.Owner == indexB) p.Owner = indexA; }
+        foreach (var r in _regions) { if (r.Owner == indexA) r.Owner = indexB; else if (r.Owner == indexB) r.Owner = indexA; }
 
         this.Invalidate();
     }

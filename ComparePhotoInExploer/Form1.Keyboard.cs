@@ -16,8 +16,14 @@ public partial class Form1
         }
         else if (e.KeyCode == Keys.Escape)
         {
-            // Esc优先关闭当前打开的界面，只有都关闭时才关闭程序
-            if (_resetOverlay.IsVisible)
+            // 优先取消当前选中的区域
+            if (_selected != null)
+            {
+                _selected = null;
+                PruneTinyRegions();
+                this.Invalidate();
+            }
+            else if (_resetOverlay.IsVisible)
             {
                 _resetOverlay.Hide();
                 this.Invalidate();
@@ -48,6 +54,20 @@ public partial class Form1
             return true;
         if (keyData == Keys.Alt || keyData == (Keys.Alt | Keys.Menu))
             return true;
+        if (keyData == (Keys.Control | Keys.Z))
+        {
+            UndoMarker(); // #4 撤销上次标记修改
+            return true;
+        }
+        if (keyData == (Keys.Control | Keys.C))
+        {
+            if (HasAnyMarker()) CopyMarkersToClipboard(); // #5 复制标记
+            return true;
+        }
+        if (keyData == Keys.Delete)
+        {
+            if (DeleteSelectedMarker()) return true; // Del 删除选中的区域/线/点
+        }
         if (keyData == (Keys.Control | Keys.W))
         {
             // Ctrl+W优先关闭当前打开的界面，只有都关闭时才关闭程序

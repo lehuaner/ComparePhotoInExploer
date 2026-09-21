@@ -12,6 +12,8 @@ public static class AppSettings
     private static readonly string ThemeSettingFile = Path.Combine(SettingsDir, "theme.txt");
     private static readonly string WindowStateFile = Path.Combine(SettingsDir, "windowstate.txt");
     private static readonly string RightClickMenuSettingFile = Path.Combine(SettingsDir, "rightclickmenu.txt");
+    private static readonly string RulerSettingFile = Path.Combine(SettingsDir, "ruler.txt");
+    private static readonly string NameSettingFile = Path.Combine(SettingsDir, "imagename.txt");
 
     #region 主题设置
 
@@ -77,6 +79,54 @@ public static class AppSettings
         {
             Directory.CreateDirectory(SettingsDir);
             File.WriteAllText(RightClickMenuSettingFile, enabled.ToString());
+        }
+        catch { }
+    }
+
+    #endregion
+
+    #region 标尺 / 图片名称 开关
+
+    /// <summary>加载标尺开关，默认关闭</summary>
+    public static bool LoadRulerSetting()
+    {
+        try
+        {
+            if (File.Exists(RulerSettingFile) && bool.TryParse(File.ReadAllText(RulerSettingFile).Trim(), out var v))
+                return v;
+        }
+        catch { }
+        return false;
+    }
+
+    public static void SaveRulerSetting(bool enabled)
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsDir);
+            File.WriteAllText(RulerSettingFile, enabled.ToString());
+        }
+        catch { }
+    }
+
+    /// <summary>加载图片名称开关，默认关闭</summary>
+    public static bool LoadNameSetting()
+    {
+        try
+        {
+            if (File.Exists(NameSettingFile) && bool.TryParse(File.ReadAllText(NameSettingFile).Trim(), out var v))
+                return v;
+        }
+        catch { }
+        return false;
+    }
+
+    public static void SaveNameSetting(bool enabled)
+    {
+        try
+        {
+            Directory.CreateDirectory(SettingsDir);
+            File.WriteAllText(NameSettingFile, enabled.ToString());
         }
         catch { }
     }

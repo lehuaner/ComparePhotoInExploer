@@ -4,8 +4,8 @@ public partial class Form1
 {
     // 自绘标题栏
     public const int TitleBarHeight = 32;
-    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp, _btnRightClickMenu, _btnSyncMove;
-    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp, _hoverRightClickMenu, _hoverSyncMove;
+    private Rectangle _btnMin, _btnMax, _btnClose, _btnHelp, _btnHistory, _btnTheme, _btnReset, _btnSyncZoom, _btnZoomHelp, _btnRightClickMenu, _btnSyncMove, _btnRuler, _btnImageName, _btnAreaShape, _btnCopy;
+    private bool _hoverMin, _hoverMax, _hoverClose, _hoverHelp, _hoverHistory, _hoverTheme, _hoverReset, _hoverSyncZoom, _hoverZoomHelp, _hoverRightClickMenu, _hoverSyncMove, _hoverRuler, _hoverImageName, _hoverAreaShape, _hoverCopy;
 
     /// <summary>
     /// 自绘标题栏 — 左侧"历史记录"+"操作说明"+"主题"按钮，右侧最小化/最大化/关闭
@@ -157,7 +157,47 @@ public partial class Form1
 
         // 重置偏移按钮（仅在有偏移时显示）
         btnX += rightClickMenuBtnW + 2;
-        bool hasAnyOffset = _imageCount > 0 && _manualOffsets.Any(o => o.X != 0 || o.Y != 0);
+
+        // 标尺开关（文字按钮）
+        int rulerBtnW = 56;
+        _btnRuler = new Rectangle(btnX, 0, rulerBtnW, TitleBarHeight);
+        DrawToggleTextButton(g, _btnRuler, "标尺", _rulerEnabled, _hoverRuler);
+        btnX += rulerBtnW + 2;
+
+        // 图片名称开关（文字按钮）
+        int nameBtnW = 56;
+        _btnImageName = new Rectangle(btnX, 0, nameBtnW, TitleBarHeight);
+        DrawToggleTextButton(g, _btnImageName, "名称", _nameEnabled, _hoverImageName);
+        btnX += nameBtnW + 2;
+
+        // 框选形状预选（文字按钮，循环 矩形/椭圆）
+        int areaShapeBtnW = 92;
+        _btnAreaShape = new Rectangle(btnX, 0, areaShapeBtnW, TitleBarHeight);
+        DrawToggleTextButton(g, _btnAreaShape, _areaEllipse ? "框选:椭圆" : "框选:矩形", _areaEllipse, _hoverAreaShape);
+        btnX += areaShapeBtnW + 2;
+
+        // 复制标记（图标按钮，仅在有标记时显示）
+        if (HasAnyMarker())
+        {
+            int copyBtnW = 32;
+            _btnCopy = new Rectangle(btnX, 0, copyBtnW, TitleBarHeight);
+            Color copyBg = _hoverCopy ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+            using (var copyBgBrush = new SolidBrush(copyBg))
+                g.FillRectangle(copyBgBrush, _btnCopy);
+            using var copyFont = new Font("Segoe UI", 12F);
+            using var copyFg = new SolidBrush(_colors.TitleBarFg);
+            var csize = g.MeasureString("⎘", copyFont);
+            g.DrawString("⎘", copyFont, copyFg,
+                _btnCopy.Left + (_btnCopy.Width - csize.Width) / 2,
+                _btnCopy.Top + (_btnCopy.Height - csize.Height) / 2);
+            btnX += copyBtnW + 2;
+        }
+        else
+        {
+            _btnCopy = Rectangle.Empty;
+        }
+
+        bool hasAnyOffset = _imageCount > 0 && (_manualOffsets.Any(o => o.X != 0 || o.Y != 0) || _splittersModified);
         if (hasAnyOffset)
         {
             _btnReset = new Rectangle(btnX, 0, 72, TitleBarHeight);
@@ -192,6 +232,23 @@ public partial class Form1
         DrawControlButton(g, _btnMax, _isWindowMaximized ? "❐" : "□", _hoverMax, false);
         // 关闭按钮
         DrawControlButton(g, _btnClose, "✕", _hoverClose, true);
+    }
+
+    /// <summary>
+    /// 绘制一个文字开关按钮（激活时高亮背景，用于标尺/名称等开关）
+    /// </summary>
+    private void DrawToggleTextButton(Graphics g, Rectangle rect, string text, bool active, bool hover)
+    {
+        Color bg = active ? _colors.TitleBarBtnActiveBg :
+                   hover ? _colors.TitleBarBtnHoverBg : Color.Transparent;
+        using (var bgBrush = new SolidBrush(bg))
+            g.FillRectangle(bgBrush, rect);
+        using var font = new Font("Microsoft YaHei UI", 9F);
+        using var fgBrush = new SolidBrush(_colors.TitleBarFg);
+        var size = g.MeasureString(text, font);
+        g.DrawString(text, font, fgBrush,
+            rect.Left + (rect.Width - size.Width) / 2,
+            rect.Top + (rect.Height - size.Height) / 2);
     }
 
     private void DrawControlButton(Graphics g, Rectangle rect, string text, bool hover, bool isClose)

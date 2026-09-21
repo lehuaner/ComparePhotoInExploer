@@ -8,6 +8,14 @@ public partial class Form1
     // 棋盘格缓存
     private TextureBrush? _checkerBrush;
 
+    // 马赛克阈值：当有效缩放(每个图片像素对应的屏幕像素)达到该倍数时，
+    // 改用最近邻插值直接露出真实像素方块。硬编码、默认开启、无需配置。
+    private const float MosaicThreshold = 3.0f; // 300%（1 图片像素 >= 3 屏幕像素）
+
+    // P3：名称绘制缓存（避免每帧 new Font 与逐字符 MeasureString）
+    private static readonly Font NameFont = new Font("Microsoft YaHei UI", 9F);
+    private readonly Dictionary<(string, int), (string[] Lines, float BoxW)> _nameWrapCache = new();
+
     private void Form1_Paint(object? sender, PaintEventArgs e)
     {
         try
@@ -147,6 +155,29 @@ public partial class Form1
                         e.Graphics.DrawRectangle(highlightPen, tgtRect.X + 1, tgtRect.Y + 1, tgtRect.Width - 2, tgtRect.Height - 2);
                     }
                 }
+
+                // 每框独立标尺（叠加在图片之上，位于标题栏按钮/历史栏下方）
+                if (_rulerEnabled)
+                {
+                    for (int i = 0; i < _imageCount; i++)
+                    {
+                        if (_images[i] == null) continue;
+                        RulerHelper.Draw(e.Graphics, GetCellRect(i), _images[i]!.Size, GetEffectiveZoom(i), _offsets[i], _colors);
+                    }
+                }
+
+                // 左上角图片名称（完整文件名，超长换行）
+                if (_nameEnabled)
+                {
+                    for (int i = 0; i < _imageCount; i++)
+                    {
+                        if (_images[i] == null) continue;
+                        DrawImageName(e.Graphics, i, GetCellRect(i));
+                    }
+                }
+
+                // 标记绘制（点/线/多边形/框，含构建预览）
+                DrawMarkers(e.Graphics);
             }
             else
             {
@@ -208,6 +239,70 @@ public partial class Form1
         }
     }
 
+    /// <summary>
+    /// 在每个格子左上角绘制完整图片文件名，超长时逐字换行（不截断）。
+    /// 标尺开启时向内下偏移以避免与标尺带重叠。
+    /// </summary>
+    private void DrawImageName(Graphics g, int index, Rectangle cell)
+    {
+        if (index >= _imagePaths.Length) return;
+        string name = Path.GetFileName(_imagePaths[index]);
+        if (string.IsNullOrEmpty(name)) return;
+
+        int inset = _rulerEnabled ? RulerHelper.Thickness + 4 : 6;
+        float startX = cell.Left + inset;
+        float startY = cell.Top + inset;
+        float maxWidth = Math.Max(20, cell.Width - inset - 8);
+
+        var (lines, boxW) = GetWrappedName(g, name, maxWidth);
+        float lineH = NameFont.GetHeight(g) + 1f;
+        float boxH = lines.Length * lineH;
+
+        g.SetClip(cell);
+        using (var bg = new SolidBrush(Color.FromArgb(150, _colors.CheckerDark)))
+            g.FillRectangle(bg, startX - 3, startY - 2, boxW + 6, boxH + 3);
+        using (var fg = new SolidBrush(_colors.TitleBarFg))
+        {
+            float y = startY;
+            foreach (var l in lines)
+            {
+                g.DrawString(l, NameFont, fg, startX, y);
+                y += lineH;
+            }
+        }
+        g.ResetClip();
+    }
+
+    /// <summary>按最大宽度逐字换行（兼容中英文/无空格文件名），结果按 (名称,宽度) 缓存，避免每帧重复测量</summary>
+    private (string[] Lines, float BoxW) GetWrappedName(Graphics g, string name, float maxWidth)
+    {
+        int key = (int)Math.Round(maxWidth);
+        if (_nameWrapCache.TryGetValue((name, key), out var hit)) return hit;
+
+        var lines = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        float w = 0, boxW = 0;
+        foreach (char c in name)
+        {
+            float cw = g.MeasureString(c.ToString(), NameFont).Width;
+            if (w + cw > maxWidth && sb.Length > 0)
+            {
+                lines.Add(sb.ToString());
+                boxW = Math.Max(boxW, w);
+                sb.Clear();
+                w = 0;
+            }
+            sb.Append(c);
+            w += cw;
+        }
+        if (sb.Length > 0) { lines.Add(sb.ToString()); boxW = Math.Max(boxW, w); }
+
+        var val = (lines.ToArray(), boxW);
+        if (_nameWrapCache.Count > 300) _nameWrapCache.Clear();
+        _nameWrapCache[(name, key)] = val;
+        return val;
+    }
+
     private void EnsureCheckerBrush()
     {
         if (_checkerBrush != null) return;
@@ -249,9 +344,19 @@ public partial class Form1
         float srcW = visWidth / zoom;
         float srcH = visHeight / zoom;
 
-        g.InterpolationMode = zoom < 0.5f
-            ? System.Drawing.Drawing2D.InterpolationMode.Bilinear
-            : System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+        // 达到马赛克阈值：最近邻 + 半像素对齐，露出整齐的像素方块
+        if (zoom >= MosaicThreshold)
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+        }
+        else
+        {
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Default;
+            g.InterpolationMode = zoom < 0.5f
+                ? System.Drawing.Drawing2D.InterpolationMode.Bilinear
+                : System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
+        }
 
         g.DrawImage(image,
             new RectangleF(visLeft, visTop, visWidth, visHeight),

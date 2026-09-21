@@ -68,6 +68,8 @@ public partial class Form1 : Form
     private float[] _zoomLevels; // 关闭同步缩放时，每张图独立的缩放级别
     private int _dragTargetIndex = -1; // 关闭同步移动时，拖动/滚轮移动的目标图片索引
     private bool _rightClickMenuEnabled = true; // 是否启用右键菜单
+    private bool _rulerEnabled;      // 每框独立标尺开关
+    private bool _nameEnabled;       // 左上角图片名称开关
     private readonly ResetOverlayHelper _resetOverlay; // 重置偏移覆盖层
 
     // 拖放
@@ -111,6 +113,10 @@ public partial class Form1 : Form
         
         // 加载右键菜单设置
         _rightClickMenuEnabled = AppSettings.LoadRightClickMenuSetting();
+
+        // 加载标尺 / 名称开关
+        _rulerEnabled = AppSettings.LoadRulerSetting();
+        _nameEnabled = AppSettings.LoadNameSetting();
         // 第一次启动时默认安装右键菜单
         if (_rightClickMenuEnabled)
         {
@@ -144,7 +150,7 @@ public partial class Form1 : Form
         this.FormBorderStyle = FormBorderStyle.None;
         this.DoubleBuffered = true;
         this.StartPosition = FormStartPosition.CenterScreen;
-        this.Size = _imageCount <= 2 ? new Size(1000, 600) : new Size(1200, 800);
+        this.Size = _imageCount <= 2 ? new Size(1120, 640) : new Size(1280, 800);
 
         // 加载上次的窗口位置和大小（覆盖默认值）
         var savedState = AppSettings.LoadWindowState();
@@ -167,8 +173,8 @@ public partial class Form1 : Form
             }
         }
 
-        // 设置最小窗口大小
-        this.MinimumSize = new Size(500, 350);
+        // 设置最小窗口大小（宽度需容纳标题栏全部文字按钮，避免与右侧控制按钮重叠）
+        this.MinimumSize = new Size(1080, 400);
 
         // 保存初始窗口位置
         _restoreBounds = this.Bounds;

@@ -5,6 +5,92 @@ namespace ComparePhotoInExploer;
 /// </summary>
 public partial class Form1
 {
+    // ===== P7：拖拽帧节奏对齐（按显示器刷新率统一重绘）=====
+    private System.Windows.Forms.Timer? _renderTimer;
+    private bool _dragDirty;
+    private Rectangle _dragDirtyRect;
+
+    private Rectangle ImageAreaRect() =>
+        new Rectangle(0, TitleBarHeight, this.ClientSize.Width, Math.Max(0, this.ClientSize.Height - TitleBarHeight));
+
+    private void MarkDragDirty(Rectangle r)
+    {
+        _dragDirtyRect = (_dragDirtyRect.Width == 0 || _dragDirtyRect.Height == 0)
+            ? r : Rectangle.Union(_dragDirtyRect, r);
+        _dragDirty = true;
+    }
+
+    private void EnsureRenderTimer()
+    {
+        if (_renderTimer != null) return;
+        int hz = NativeMethods.GetMonitorRefreshHz();
+        if (hz <= 0) hz = 60;
+        int interval = Math.Clamp((int)Math.Round(1000.0 / hz), 1, 33);
+        NativeMethods.timeBeginPeriod(1);
+        _renderTimer = new System.Windows.Forms.Timer { Interval = interval };
+        _renderTimer.Tick += RenderTimer_Tick;
+        _renderTimer.Start();
+    }
+
+    private void RenderTimer_Tick(object? sender, EventArgs e)
+    {
+        if (!_dragDirty) return;
+        _dragDirty = false;
+        var r = _dragDirtyRect;
+        _dragDirtyRect = Rectangle.Empty;
+        this.Invalidate(r);
+    }
+
+    private void StopRenderTimer()
+    {
+        if (_renderTimer != null)
+        {
+            _renderTimer.Stop();
+            _renderTimer.Tick -= RenderTimer_Tick;
+            _renderTimer.Dispose();
+            _renderTimer = null;
+            NativeMethods.timeEndPeriod(1);
+        }
+        if (_dragDirty) // 收尾：立即重绘最后一次脏区
+        {
+            _dragDirty = false;
+            this.Invalidate(_dragDirtyRect);
+            _dragDirtyRect = Rectangle.Empty;
+        }
+    }
+
+    // #8：标题栏按钮悬停提示
+    private readonly ToolTip _toolTip = new() { AutomaticDelay = 400, ReshowDelay = 100, AutoPopDelay = 5000 };
+    private string? _tipKey;
+
+    private string? GetTitleTipKey(Point p)
+    {
+        if (_btnHistory.Contains(p)) return "历史记录";
+        if (_btnHelp.Contains(p)) return "操作说明 (H)";
+        if (_btnTheme.Contains(p)) return "切换主题";
+        if (_btnSyncZoom.Contains(p)) return "同步对齐 / 独立缩放";
+        if (_btnSyncMove.Contains(p)) return "同步移动 / 缩放开关";
+        if (_btnZoomHelp.Contains(p)) return "缩放操作说明";
+        if (_btnRightClickMenu.Contains(p)) return "添加到资源管理器右键菜单";
+        if (_btnRuler.Contains(p)) return "每框独立标尺开关";
+        if (_btnImageName.Contains(p)) return "图片名称显示开关";
+        if (_btnAreaShape.Contains(p)) return "框选形状(画前预选): 矩形/椭圆";
+        if (!_btnCopy.IsEmpty && _btnCopy.Contains(p)) return "复制全部标记(图+文本)";
+        if (!_btnReset.IsEmpty && _btnReset.Contains(p)) return "重置偏移";
+        if (_btnMin.Contains(p)) return "最小化";
+        if (_btnMax.Contains(p)) return "最大化/还原";
+        if (_btnClose.Contains(p)) return "关闭 (Esc)";
+        return null;
+    }
+
+    private void ShowTitleTip(string? text, Point p)
+    {
+        if (text == _tipKey) return;
+        _tipKey = text;
+        if (text == null) { _toolTip.Hide(this); return; }
+        _toolTip.Show(text, this, p.X, p.Y + 24, 4000);
+    }
+
     private void Form1_MouseDown(object? sender, MouseEventArgs e)
     {
         // 标题栏区域处理
@@ -118,9 +204,47 @@ public partial class Form1
                 this.Invalidate();
                 return;
             }
+            // 标尺开关
+            if (_btnRuler.Contains(e.Location))
+            {
+                _rulerEnabled = !_rulerEnabled;
+                AppSettings.SaveRulerSetting(_rulerEnabled);
+                this.Invalidate();
+                return;
+            }
+            // 图片名称开关
+            if (_btnImageName.Contains(e.Location))
+            {
+                _nameEnabled = !_nameEnabled;
+                AppSettings.SaveNameSetting(_nameEnabled);
+                this.Invalidate();
+                return;
+            }
+            // 框选形状切换（矩形/椭圆）
+            if (_btnAreaShape.Contains(e.Location))
+            {
+                _areaEllipse = !_areaEllipse;
+                this.Invalidate();
+                return;
+            }
+            // 复制标记
+            if (!_btnCopy.IsEmpty && _btnCopy.Contains(e.Location))
+            {
+                CopyMarkersToClipboard();
+                return;
+            }
             // 重置偏移按钮
             if (!_btnReset.IsEmpty && _btnReset.Contains(e.Location))
             {
+                // #2：仅移动了分割线、无手动偏移 => 直接重置分割线（无需浮层）
+                bool anyOffset = _imageCount > 0 && _manualOffsets.Any(o => o.X != 0 || o.Y != 0);
+                if (!anyOffset && _splittersModified)
+                {
+                    ResetSplitters();
+                    UpdateBaseZoom();
+                    this.Invalidate();
+                    return;
+                }
                 _resetOverlay.IsVisible = !_resetOverlay.IsVisible;
                 if (_resetOverlay.IsVisible)
                 {
@@ -196,6 +320,13 @@ public partial class Form1
         {
             if (e.Button == MouseButtons.Left)
             {
+                // #13：点击“同时重置分割线”复选框
+                if (_resetOverlay.IsInCheckbox(e.Location))
+                {
+                    _resetOverlay.ResetSplittersChecked = !_resetOverlay.ResetSplittersChecked;
+                    this.Invalidate();
+                    return;
+                }
                 // 点击重置按钮（根据选中状态决定功能）
                 if (_resetOverlay.BatchResetButton.Contains(e.Location))
                 {
@@ -219,6 +350,7 @@ public partial class Form1
                                 _resetOverlay.Hide();
                             else
                                 _resetOverlay.SelectedCells.Clear();
+                            ResetSplittersIfChecked();
                             this.Invalidate();
                         }
                     }
@@ -247,6 +379,7 @@ public partial class Form1
                                     _manualOffsets[idx] = new PointF(0, 0);
                                 }
                                 _resetOverlay.Hide();
+                                ResetSplittersIfChecked();
                                 this.Invalidate();
                             }
                         }
@@ -308,6 +441,7 @@ public partial class Form1
                             foreach (int idx in toReset)
                                 _resetOverlay.SelectedCells.Remove(idx);
                         }
+                        ResetSplittersIfChecked();
                         this.Invalidate();
                     }
                 }
@@ -343,9 +477,34 @@ public partial class Form1
             }
         }
 
+        // 中键：标记交互（点/线/框选）
+        if (e.Button == MouseButtons.Middle && e.Location.Y >= TitleBarHeight && _imageCount > 0)
+        {
+            _midDown = true;
+            _midDownPos = e.Location;
+            _midMoved = false;
+            _midShift = (ModifierKeys & Keys.Shift) == Keys.Shift;
+            this.Capture = true;
+            return;
+        }
+
+        // 右键：删除命中的标记
+        if (e.Button == MouseButtons.Right && e.Location.Y >= TitleBarHeight && HasAnyMarker())
+        {
+            if (DeleteMarkerAt(e.Location))
+                this.Invalidate();
+            return;
+        }
+
         // 图片区域拖动
         if (e.Button == MouseButtons.Left)
         {
+            // #5：点中标尺带 => 发射一条“两点线”参考线（复用线段逻辑）
+            if (TryCreateRulerGuide(e.Location)) return;
+            // #16/#4：左键点中区域 => 切换选中（选中后 Shift+中键可追加顶点/成型）
+            if (HasAnyMarker() && TryToggleSelectAt(e.Location)) return;
+            // 点空白 => 取消选中后正常拖图
+            if (_selected != null) { _selected = null; PruneTinyRegions(); this.Invalidate(); }
             _isDragging = true;
             _lastMousePos = e.Location;
 
@@ -370,6 +529,15 @@ public partial class Form1
 
     private void Form1_MouseMove(object? sender, MouseEventArgs e)
     {
+        // 中键标记拖拽中：更新橡皮筋预览
+        if (_midDown)
+        {
+            if (!_midMoved && (Math.Abs(e.X - _midDownPos.X) >= MarkerDragThreshold || Math.Abs(e.Y - _midDownPos.Y) >= MarkerDragThreshold))
+                _midMoved = true;
+            this.Invalidate();
+            return;
+        }
+
         // 边框调整大小区域光标
         if (!_isWindowMaximized && e.Location.Y >= TitleBarHeight)
         {
@@ -399,7 +567,7 @@ public partial class Form1
             float deltaY = e.Y - _lastMousePos.Y;
             _lastMousePos = e.Location;
             UpdateSplitterDrag(deltaX, deltaY);
-            UpdateBaseZoom();
+            // #12：分割线位移不改变图片缩放（不再重算基准缩放）
             this.Invalidate();
             return;
         }
@@ -453,11 +621,17 @@ public partial class Form1
             bool newHoverZoomHelp = _btnZoomHelp.Contains(e.Location);
             bool newHoverRightClickMenu = _btnRightClickMenu.Contains(e.Location);
             bool newHoverSyncMove = _btnSyncMove.Contains(e.Location);
+            bool newHoverRuler = _btnRuler.Contains(e.Location);
+            bool newHoverImageName = _btnImageName.Contains(e.Location);
+            bool newHoverAreaShape = _btnAreaShape.Contains(e.Location);
+            bool newHoverCopy = !_btnCopy.IsEmpty && _btnCopy.Contains(e.Location);
 
             if (newHoverMin != _hoverMin || newHoverMax != _hoverMax || newHoverClose != _hoverClose || 
                 newHoverHelp != _hoverHelp || newHoverHistory != _hoverHistory || newHoverTheme != _hoverTheme ||
                 newHoverReset != _hoverReset || newHoverSyncZoom != _hoverSyncZoom || newHoverZoomHelp != _hoverZoomHelp ||
-                newHoverRightClickMenu != _hoverRightClickMenu || newHoverSyncMove != _hoverSyncMove)
+                newHoverRightClickMenu != _hoverRightClickMenu || newHoverSyncMove != _hoverSyncMove ||
+                newHoverRuler != _hoverRuler || newHoverImageName != _hoverImageName ||
+                newHoverAreaShape != _hoverAreaShape || newHoverCopy != _hoverCopy)
             {
                 _hoverMin = newHoverMin;
                 _hoverMax = newHoverMax;
@@ -470,9 +644,33 @@ public partial class Form1
                 _hoverZoomHelp = newHoverZoomHelp;
                 _hoverRightClickMenu = newHoverRightClickMenu;
                 _hoverSyncMove = newHoverSyncMove;
+                _hoverRuler = newHoverRuler;
+                _hoverImageName = newHoverImageName;
+                _hoverAreaShape = newHoverAreaShape;
+                _hoverCopy = newHoverCopy;
                 this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
             }
+
+            // #8：标题栏按钮悬停提示
+            ShowTitleTip(GetTitleTipKey(e.Location), e.Location);
             return;
+        }
+
+        // #7：离开标题栏时，清除标题栏按钮残留的悬停高亮
+        if (_hoverMin || _hoverMax || _hoverClose || _hoverHelp || _hoverHistory || _hoverTheme ||
+            _hoverReset || _hoverSyncZoom || _hoverZoomHelp || _hoverRightClickMenu || _hoverSyncMove ||
+            _hoverRuler || _hoverImageName || _hoverAreaShape || _hoverCopy)
+        {
+            _hoverMin = _hoverMax = _hoverClose = _hoverHelp = _hoverHistory = _hoverTheme = false;
+            _hoverReset = _hoverSyncZoom = _hoverZoomHelp = _hoverRightClickMenu = _hoverSyncMove = false;
+            _hoverRuler = _hoverImageName = _hoverAreaShape = _hoverCopy = false;
+            _toolTip.Hide(this);
+            _tipKey = null;
+            this.Invalidate(new Rectangle(0, 0, this.ClientSize.Width, TitleBarHeight));
+        }
+        else
+        {
+            ShowTitleTip(null, e.Location);
         }
 
         // 历史记录覆盖层悬停检测
@@ -538,7 +736,12 @@ public partial class Form1
             }
 
             _lastMousePos = e.Location;
-            this.Invalidate();
+            // P2+P7：只累积受影响脏区，交由刷新率定时器统一重绘（避免整窗全量重绘 + 帧节奏对齐）
+            Rectangle dirty = (_shiftDragIndex >= 0 && _shiftDragIndex < _imageCount) ? GetCellRect(_shiftDragIndex)
+                          : (_dragTargetIndex >= 0 && _dragTargetIndex < _imageCount) ? GetCellRect(_dragTargetIndex)
+                          : ImageAreaRect();
+            MarkDragDirty(dirty);
+            EnsureRenderTimer();
         }
 
         // Tab互换拖动模式：检测悬停目标，Tab释放则取消
@@ -567,6 +770,29 @@ public partial class Form1
 
     private void Form1_MouseUp(object? sender, MouseEventArgs e)
     {
+        // 中键标记拖拽结束：根据位移/Shift 生成点/线/框，或连点
+        if (_midDown)
+        {
+            this.Capture = false;
+            bool shift = _midShift, moved = _midMoved;
+            var start = _midDownPos;
+            var up = e.Location;
+            _midDown = false;
+            _midMoved = false;
+            if (shift)
+            {
+                if (moved) CreateArea(start, up);
+                else TryConnectPointAt(up);
+            }
+            else
+            {
+                if (moved) CreateLine(start, up);
+                else CreatePointAt(up);
+            }
+            this.Invalidate();
+            return;
+        }
+
         // 分割线拖动结束
         if (_isSplitterDragging)
         {
@@ -594,6 +820,7 @@ public partial class Form1
         _isDragging = false;
         _shiftDragIndex = -1;
         _dragTargetIndex = -1;
+        StopRenderTimer(); // P7：停止帧节奏定时器并收尾重绘
         if (_resetOverlay.IsSelecting)
         {
             _resetOverlay.EndSelection();

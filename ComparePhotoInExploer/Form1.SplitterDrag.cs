@@ -26,6 +26,9 @@ public partial class Form1
     // 分割线检测阈值（像素）
     private const int SplitterHitTestRadius = 5;
 
+    // #2：分割线是否被移动过（用于触发“重置偏移”按钮显示）
+    private bool _splittersModified = false;
+
     // 单个视窗最小宽度/高度（像素）
     private const int MinCellSize = 80;
 
@@ -49,6 +52,17 @@ public partial class Form1
         {
             _cellWidthRatios[i] = 1f / _cols;
             _cellHeightRatios[i] = 1f / _rows;
+        }
+        _splittersModified = false;
+    }
+
+    /// <summary>#13：重置偏移时若勾选“同时重置分割线”，则恢复均分布局</summary>
+    private void ResetSplittersIfChecked()
+    {
+        if (_resetOverlay.ResetSplittersChecked)
+        {
+            ResetSplitters();
+            UpdateBaseZoom();
         }
     }
 
@@ -217,6 +231,8 @@ public partial class Form1
             ApplyVerticalSplitterDelta(deltaX, shiftMode);
         else
             ApplyHorizontalSplitterDelta(deltaY, shiftMode);
+
+        _splittersModified = true; // #2：发生过分割线位移
     }
 
     /// <summary>

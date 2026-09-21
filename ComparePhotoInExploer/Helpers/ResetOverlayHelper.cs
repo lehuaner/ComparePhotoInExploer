@@ -16,6 +16,11 @@ public class ResetOverlayHelper
     public Point SelectEnd { get; set; }
     public Rectangle BatchResetButton { get; set; } = Rectangle.Empty;
 
+    // #13：是否同时重置分割线（默认选中）
+    public bool ResetSplittersChecked { get; set; } = true;
+    public Rectangle CheckboxRect { get; private set; } = Rectangle.Empty;
+    public bool IsInCheckbox(Point p) => IsVisible && CheckboxRect.Contains(p);
+
     // 布局参数
     private const int ThumbSize = 56;
     private const int CellGap = 6;
@@ -23,6 +28,7 @@ public class ResetOverlayHelper
     private const int GroupPadding = 10;
     private const int BatchBtnW = 100;
     private const int BatchBtnH = 28;
+    private const int CheckBoxH = 20;
     private const int HintH = 18;
 
     // 框选前的选中状态（用于框选过程中的实时预览）
@@ -51,7 +57,7 @@ public class ResetOverlayHelper
         int gridStartX = (availW - gridW) / 2;
         int gridStartY = topOffset + GroupPadding;
 
-        int totalHeight = GroupPadding + gridH + CellGap + BatchBtnH + CellGap + HintH + GroupPadding;
+        int totalHeight = GroupPadding + gridH + CellGap + BatchBtnH + CellGap + CheckBoxH + CellGap + HintH + GroupPadding;
 
         return new ResetOverlayLayout
         {
@@ -199,6 +205,26 @@ public class ResetOverlayHelper
             batchBtnRect.Top + (batchBtnRect.Height - batchLabelSize.Height) / 2);
         BatchResetButton = batchBtnRect;
 
+        // #13：复选框—“同时重置分割线”
+        int chkY = btnY + BatchBtnH + CellGap;
+        const int chkBoxSize = 14;
+        string chkText = "同时重置分割线";
+        using var chkFont = new Font("Microsoft YaHei UI", 9F);
+        var chkTextSize = g.MeasureString(chkText, chkFont);
+        int chkTotalW = chkBoxSize + 6 + (int)chkTextSize.Width;
+        int chkX = (availW - chkTotalW) / 2;
+        var boxRect = new Rectangle(chkX, chkY + (Math.Max(chkBoxSize, (int)chkTextSize.Height) - chkBoxSize) / 2, chkBoxSize, chkBoxSize);
+        using (var cbPen = new Pen(colors.ResetPanelFg, 1))
+            g.DrawRectangle(cbPen, boxRect);
+        if (ResetSplittersChecked)
+        {
+            using var cbFill = new SolidBrush(colors.ResetCellSelectedBorder);
+            g.FillRectangle(cbFill, boxRect.X + 3, boxRect.Y + 3, chkBoxSize - 6, chkBoxSize - 6);
+        }
+        using var chkFg = new SolidBrush(colors.ResetPanelFg);
+        g.DrawString(chkText, chkFont, chkFg, chkX + chkBoxSize + 6, chkY);
+        CheckboxRect = new Rectangle(chkX, chkY, chkTotalW, Math.Max(chkBoxSize, (int)chkTextSize.Height) + 4);
+
         // 操作说明
         using var hintFont = new Font("Microsoft YaHei UI", 8F);
         using var hintFg = new SolidBrush(colors.ResetPanelSubFg);
@@ -206,7 +232,7 @@ public class ResetOverlayHelper
         var hintTextSize = g.MeasureString(hintText, hintFont);
         g.DrawString(hintText, hintFont, hintFg,
             (availW - hintTextSize.Width) / 2,
-            btnY + BatchBtnH + CellGap);
+            chkY + CheckBoxH + CellGap);
     }
 
     /// <summary>
