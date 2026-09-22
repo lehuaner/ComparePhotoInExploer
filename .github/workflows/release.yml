@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# 允许创建 Release 与上传产物（默认 token 为只读，会 403）
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
     runs-on: windows-latest
