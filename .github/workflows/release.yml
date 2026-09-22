@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Compute version
+      id: ver
+      shell: pwsh
+      run: |
+        $tag = if ($env:GITHUB_REF -match 'refs/tags/(.*)') { $Matches[1] } else { 'dev' }
+        "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+    # 变体 A：框架依赖（体积小，目标机需安装 .NET 10 Windows Desktop 运行时）
+    - name: Publish framework-dependent
+      run: dotnet publish ComparePhotoInExploer/ComparePhotoInExploer.csproj -c Release -r win-x64 --self-contained false -p:DebugType=none -p:DebugSymbols=false -o out-fd
+
+    # 变体 B：自包含免安装（内含运行时，双击即用，体积较大）
+    - name: Publish self-contained
+      run: dotnet publish ComparePhotoInExploer/ComparePhotoInExploer.csproj -c Release -r win-x64 --self-contained true -p:DebugType=none -p:DebugSymbols=false -p:PublishSingleFile=false -o out-sc
+
+    - name: Package zips
+      shell: pwsh
+      run: |
+        $v = '${{ steps.ver.outputs.tag }}'
+        Compress-Archive -Path "out-fd/*" -DestinationPath "ComparePhotoInExploer-$v-win-x64.zip" -CompressionLevel Optimal
+        Compress-Archive -Path "out-sc/*" -DestinationPath "ComparePhotoInExploer-$v-win-x64-selfcontained.zip" -CompressionLevel Optimal
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ComparePhotoInExploer-*-win-x64.zip
+          ComparePhotoInExploer-*-win-x64-selfcontained.zip
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

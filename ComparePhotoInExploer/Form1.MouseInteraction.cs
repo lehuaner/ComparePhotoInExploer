@@ -59,6 +59,31 @@ public partial class Form1
         }
     }
 
+    // ===== P1：交互中降插值，静止后回高质 =====
+    private System.Windows.Forms.Timer? _idleTimer;
+
+    private void BeginInteraction()
+    {
+        _fastInterp = true;
+        if (_idleTimer == null)
+        {
+            _idleTimer = new System.Windows.Forms.Timer { Interval = 120 };
+            _idleTimer.Tick += (_, __) =>
+            {
+                _idleTimer!.Stop();
+                if (_fastInterp) { _fastInterp = false; this.Invalidate(); }
+            };
+        }
+        _idleTimer.Stop();
+        _idleTimer.Start();
+    }
+
+    private void SettleInteraction()
+    {
+        _idleTimer?.Stop();
+        if (_fastInterp) { _fastInterp = false; this.Invalidate(); }
+    }
+
     // #8：标题栏按钮悬停提示
     private readonly ToolTip _toolTip = new() { AutomaticDelay = 400, ReshowDelay = 100, AutoPopDelay = 5000 };
     private string? _tipKey;
@@ -506,6 +531,7 @@ public partial class Form1
             // 点空白 => 取消选中后正常拖图
             if (_selected != null) { _selected = null; PruneTinyRegions(); this.Invalidate(); }
             _isDragging = true;
+            StopZoomAnim(); // 滑行中拖拽 → 立即停住缩放，直接拖图
             _lastMousePos = e.Location;
 
             // Shift+左键：只拖动鼠标所在的那张图片
@@ -742,6 +768,7 @@ public partial class Form1
                           : ImageAreaRect();
             MarkDragDirty(dirty);
             EnsureRenderTimer();
+            BeginInteraction(); // P1：拖拽中降插值
         }
 
         // Tab互换拖动模式：检测悬停目标，Tab释放则取消
@@ -821,6 +848,7 @@ public partial class Form1
         _shiftDragIndex = -1;
         _dragTargetIndex = -1;
         StopRenderTimer(); // P7：停止帧节奏定时器并收尾重绘
+        SettleInteraction(); // P1：拖拽结束回高质插值
         if (_resetOverlay.IsSelecting)
         {
             _resetOverlay.EndSelection();

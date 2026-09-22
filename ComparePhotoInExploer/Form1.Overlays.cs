@@ -60,14 +60,25 @@ public partial class Form1
             "- Shift+拖动分割线: 只调整分割线两侧两张图片的视窗大小（可产生不对齐布局）",
             "- 滚轮: 上下移动图片",
             "- Ctrl+滚轮: 左右移动图片",
-            "- Alt+滚轮: 以鼠标指针为中心缩放图片",
+            "- Alt+滚轮 / + - 键: 平滑缩放图片（以鼠标/画面中心为基准）",
             "- 拖入图片: 加载新的图片组进行对比",
             "- Esc / Ctrl+W: 关闭当前界面或程序",
         };
 
-        float boxWidth = 420f;
-        float boxHeight = instructions.Length * 22 + 20;
         int topOffset = TitleBarHeight;
+        using var titleFont = new Font(this.Font, FontStyle.Bold);
+
+        // 按最宽的一行自适应面板宽度，避免长行超出容器
+        float maxTextW = 0f;
+        for (int i = 0; i < instructions.Length; i++)
+        {
+            var f = i == 0 ? titleFont : this.Font;
+            float w = g.MeasureString(instructions[i], f).Width;
+            if (w > maxTextW) maxTextW = w;
+        }
+        float boxWidth = Math.Min(this.ClientSize.Width - 20f, maxTextW + 24f);
+        float boxHeight = instructions.Length * 22 + 20;
+
         using (var bgBrush = new SolidBrush(_colors.HelpPanelBg))
         {
             g.FillRectangle(bgBrush, 5, topOffset + 5, boxWidth, boxHeight);
@@ -78,10 +89,11 @@ public partial class Form1
 
         for (int i = 0; i < instructions.Length; i++)
         {
-            using var brush = i == 0 
+            using var brush = i == 0
                 ? new SolidBrush(_colors.HelpTitleFg)
                 : new SolidBrush(_colors.HelpTextFg);
-            g.DrawString(instructions[i], i == 0 ? new Font(this.Font, FontStyle.Bold) : this.Font, brush, 12, topOffset + 10 + i * 22);
+            var font = i == 0 ? titleFont : this.Font;
+            g.DrawString(instructions[i], font, brush, 12, topOffset + 10 + i * 22);
         }
     }
 

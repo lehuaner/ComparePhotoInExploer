@@ -94,6 +94,18 @@ public partial class Form1
             }
             return true;
         }
+        // 键盘 +/− 平滑缩放（小键盘 Add/Subtract 或主键盘 OemPlus/OemMinus，含 Shift 变体）
+        var kcode = keyData & Keys.KeyCode;
+        if (kcode == Keys.Add || kcode == Keys.Oemplus)
+        {
+            ZoomByKeys(1.25f);
+            return true;
+        }
+        if (kcode == Keys.Subtract || kcode == Keys.OemMinus)
+        {
+            ZoomByKeys(1f / 1.25f);
+            return true;
+        }
         return base.ProcessCmdKey(ref msg, keyData);
     }
 

@@ -73,6 +73,7 @@ public partial class Form1
             {
                 _images[i]?.Dispose();
                 _images[i] = null;
+                if (_pyramid != null && i < _pyramid.Length) { ImagePyramid.Dispose(_pyramid[i]); _pyramid[i] = null; }
 
                 if (i < _imagePaths.Length)
                 {
@@ -81,8 +82,18 @@ public partial class Form1
                     using var fs = new FileStream(_imagePaths[i], FileMode.Open, FileAccess.Read);
                     using var tmp = Image.FromStream(fs);
                     _images[i] = new Bitmap(tmp);
+
+                    // O1：构建降采样金字塔（仅交互拖拽时使用，降低大图每帧降采样开销）
+                    if (_pyramid != null && i < _pyramid.Length && _images[i] != null)
+                    {
+                        try { _pyramid[i] = ImagePyramid.Build(_images[i]!); }
+                        catch { _pyramid[i] = null; }
+                    }
                 }
             }
+
+            // 源位图已重建，丢弃失效的 GPU(D2D) 位图缓存
+            _d2d?.ClearBitmapCache();
         }
         catch
         {

@@ -51,13 +51,19 @@ ComparePhotoInExploer/obj/
 build_output.txt
 search_reg.ps1
 
-# Release output
+# Release output（本地产物不入库；发布时 release.yml / build-release.ps1 需纳入版本控制）
 publish/
+publish2/
 publish-test/
+out-*/
 ComparePhotoInExploer-*.zip
 build-release.bat
-.github/workflows/release.yml
-build-release.ps1
+
+# 本地诊断工具 / 临时目录
+_tools/
+ComparePhotoInExploer/_examples/
+
+# 文档（暂不入库）
 业务逻辑.md
 UI设计规范.md
 Buglist

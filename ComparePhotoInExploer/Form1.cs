@@ -47,6 +47,7 @@ public partial class Form1 : Form
 
     // 每张图独立的数据
     private Image?[] _images;
+    private List<Bitmap>?[]? _pyramid; // O1：与 _images 平行的降采样金字塔（交互拖拽大图用）
     private float[] _baseZooms;
     private PointF[] _offsets;
     private PointF[] _manualOffsets; // Shift拖动产生的额外偏移量
@@ -135,6 +136,7 @@ public partial class Form1 : Form
 
         // 初始化每张图的数据
         _images = new Image?[Math.Max(1, _imageCount)];
+        _pyramid = new List<Bitmap>?[Math.Max(1, _imageCount)];
         _baseZooms = new float[Math.Max(1, _imageCount)];
         _offsets = new PointF[Math.Max(1, _imageCount)];
         _manualOffsets = new PointF[Math.Max(1, _imageCount)];
