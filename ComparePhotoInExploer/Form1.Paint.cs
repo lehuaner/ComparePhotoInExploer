@@ -12,6 +12,20 @@ public partial class Form1
     // 改用最近邻插值直接露出真实像素方块。硬编码、默认开启、无需配置。
     private const float MosaicThreshold = 3.0f; // 300%（1 图片像素 >= 3 屏幕像素）
 
+    // 缩放插值模式（D2D 与 GDI+ 两条路径都遵守）：
+    // Auto=默认（达阈值用最近邻、否则双线性）；其余为强制指定。D2D 无真双三次，Bicubic→Fant 近似。
+    private enum ZoomInterp { Auto, NearestNeighbor, Bilinear, Bicubic }
+    private ZoomInterp _zoomInterp = ZoomInterp.Auto;
+
+    // 当前插值模式对应的 D2D 插值码（0=NN,1=Linear,2=Fant）；Auto 按缩放阈值逐图判定
+    private int D2DInterpCodeFor(float zoom) => _zoomInterp switch
+    {
+        ZoomInterp.NearestNeighbor => 0,
+        ZoomInterp.Bilinear => 1,
+        ZoomInterp.Bicubic => 2,
+        _ => zoom >= MosaicThreshold ? 0 : 1,
+    };
+
     // P3：名称绘制缓存（避免每帧 new Font 与逐字符 MeasureString）
     private static readonly Font NameFont = new Font("Microsoft YaHei UI", 9F);
     private readonly Dictionary<(string, int), (string[] Lines, float BoxW)> _nameWrapCache = new();
@@ -318,7 +332,9 @@ public partial class Form1
         EnsureD2D();
 
         bool drawn = false;
-        if (_d2d != null)
+        // 双三次(D2D 不支持，走 GDI+ CPU、大图很慢)：仅“静止”时用真双三次；交互中回退 GPU 双线性保帧率。
+        bool useGdiBicubic = _zoomInterp == ZoomInterp.Bicubic && !_fastInterp;
+        if (_d2d != null && !useGdiBicubic)
         {
             var jobs = new List<D2DJob>();
             for (int i = 0; i < _imageCount; i++)
@@ -402,7 +418,8 @@ public partial class Form1
         job = new D2DJob(srcBmp,
             visLeft, visTop, visW, visH,
             srcX * us, srcY * us, srcW * us, srcH * us,
-            drawArea.Left, drawArea.Top, drawArea.Right, drawArea.Bottom);
+            drawArea.Left, drawArea.Top, drawArea.Right, drawArea.Bottom,
+            D2DInterpCodeFor(zoom));
         return true;
     }
 
@@ -453,16 +470,22 @@ public partial class Form1
 
         g.SetClip(drawArea);
 
-        // 达到马赛克阈值：最近邻 + 半像素对齐，露出整齐的像素方块
-        if (zoom >= MosaicThreshold)
+        // 插值模式（D2D 不可用时的 GDI+ 回退，同样遵守 _zoomInterp）
+        bool mosaic = _zoomInterp == ZoomInterp.NearestNeighbor
+                   || (_zoomInterp == ZoomInterp.Auto && zoom >= MosaicThreshold);
+        if (mosaic)
         {
             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
             g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
         }
-        else
+        else if (_zoomInterp == ZoomInterp.Bicubic)
         {
             g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Default;
-            // P1：交互中统一用 Bilinear（快），静止时 zoom<0.5 用 Bilinear、否则 HighQualityBilinear
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+        }
+        else // Auto（未达阈值）或 Bilinear
+        {
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Default;
             g.InterpolationMode = (_fastInterp || zoom < 0.5f)
                 ? System.Drawing.Drawing2D.InterpolationMode.Bilinear
                 : System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;

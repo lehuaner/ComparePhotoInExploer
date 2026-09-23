@@ -15,14 +15,15 @@ internal readonly struct D2DJob
     public readonly float Dx, Dy, Dw, Dh;
     public readonly float Sx, Sy, Sw, Sh;
     public readonly float ClipL, ClipT, ClipR, ClipB;
+    public readonly int InterpCode; // 0=NearestNeighbor,1=Linear,2=Fant(≈双三次)
 
     public D2DJob(Bitmap src, float dx, float dy, float dw, float dh,
                   float sx, float sy, float sw, float sh,
-                  float clipL, float clipT, float clipR, float clipB)
+                  float clipL, float clipT, float clipR, float clipB, int interpCode = 1)
     {
         Src = src; Dx = dx; Dy = dy; Dw = dw; Dh = dh;
         Sx = sx; Sy = sy; Sw = sw; Sh = sh;
-        ClipL = clipL; ClipT = clipT; ClipR = clipR; ClipB = clipB;
+        ClipL = clipL; ClipT = clipT; ClipR = clipR; ClipB = clipB; InterpCode = interpCode;
     }
 }
 
@@ -71,10 +72,13 @@ internal sealed class D2DImageRenderer : IDisposable
             if (bmp == null) continue;
 
             _target.PushAxisAlignedClip(new RawRectF(j.ClipL, j.ClipT, j.ClipR, j.ClipB), AntialiasMode.Aliased);
+            var interp = j.InterpCode == 0
+                ? BitmapInterpolationMode.NearestNeighbor
+                : BitmapInterpolationMode.Linear;
             _target.DrawBitmap(bmp,
                 new RawRectF(j.Dx, j.Dy, j.Dx + j.Dw, j.Dy + j.Dh),
                 1f,
-                BitmapInterpolationMode.Linear,
+                interp,
                 new RawRectF(j.Sx, j.Sy, j.Sx + j.Sw, j.Sy + j.Sh));
             _target.PopAxisAlignedClip();
         }

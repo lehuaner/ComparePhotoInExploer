@@ -98,15 +98,22 @@ public partial class Form1
         var kcode = keyData & Keys.KeyCode;
         if (kcode == Keys.Add || kcode == Keys.Oemplus)
         {
-            ZoomByKeys(1.25f);
+            ZoomByKeys(1.12f);
             return true;
         }
         if (kcode == Keys.Subtract || kcode == Keys.OemMinus)
         {
-            ZoomByKeys(1f / 1.25f);
+            ZoomByKeys(1f / 1.12f);
             return true;
         }
-        return base.ProcessCmdKey(ref msg, keyData);
+        // 缩放插值模式：A=自动 / N=最近邻(看像素马赛克) / B=双线性 / C=双三次(D2D用Fant近似)
+        if (kcode == Keys.A) _zoomInterp = ZoomInterp.Auto;
+        else if (kcode == Keys.N) _zoomInterp = ZoomInterp.NearestNeighbor;
+        else if (kcode == Keys.B) _zoomInterp = ZoomInterp.Bilinear;
+        else if (kcode == Keys.C) _zoomInterp = ZoomInterp.Bicubic;
+        else return base.ProcessCmdKey(ref msg, keyData);
+        this.Invalidate();
+        return true;
     }
 
     private bool IsAltPressed()

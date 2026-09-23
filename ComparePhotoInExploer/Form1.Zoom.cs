@@ -62,7 +62,7 @@ public partial class Form1
         else if (IsAltPressed())
         {
             // 平滑缩放：以鼠标为锚点缓动到 cur*factor（连续滚动可重定向）
-            float zoomFactor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
+            float zoomFactor = e.Delta > 0 ? 1.12f : 1f / 1.12f;
             StartZoom(e.Location, HitTest(e.Location), !IsSyncZoomDisabled(), zoomFactor);
         }
         else
